@@ -1,0 +1,777 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ tool_title }} | SafarEdge{% endblock %}
+
+{% block extra_css %}
+<style>
+    .app-workspace {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 20px);
+        width: 100%;
+        position: relative;
+    }
+
+    .app-content-area {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        background-color: #121212;
+    }
+
+    .app-pane {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: none;
+    }
+
+    .app-pane.active {
+        display: block;
+    }
+
+    #cad-canvas-container {
+        width: 100%;
+        height: 100%;
+        position: absolute;
+        left: 0;
+        top: 0;
+        cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M16 0v12M16 20v12M0 16h12M20 16h12" stroke="%2300ffcc" stroke-width="1"/><rect x="12" y="12" width="8" height="8" fill="none" stroke="%23ffffff" stroke-width="1"/></svg>') 16 16, crosshair;
+    }
+
+    #luckysheet {
+        width: 100%;
+        height: 100%;
+        position: absolute;
+        left: 0;
+        top: 0;
+    }
+
+    /* Floating Toolbar */
+    .cad-toolbar {
+        position: absolute;
+        top: 15px;
+        left: 15px;
+        background: rgba(30, 30, 30, 0.95);
+        border: 1px solid #3c3c3c;
+        border-radius: 6px;
+        display: flex;
+        gap: 4px;
+        padding: 6px;
+        z-index: 999;
+    }
+
+    .cad-tool-btn {
+        background: #2a2a2a;
+        color: #cccccc;
+        border: 1px solid #444;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 13px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .cad-tool-btn.active {
+        background: #007acc;
+        color: #ffffff;
+    }
+
+    .cad-command-bar {
+        position: absolute;
+        bottom: 15px;
+        left: 15px;
+        right: 15px;
+        background: rgba(20, 20, 20, 0.95);
+        border: 1px solid #333;
+        padding: 8px 14px;
+        color: #00ffcc;
+        font-family: monospace;
+        font-size: 13px;
+        z-index: 999;
+        display: flex;
+        justify-content: space-between;
+    }
+
+    .app-tab-bar {
+        display: flex;
+        align-items: center;
+        background-color: #f3f4f6;
+        border-top: 1px solid #d1d5db;
+        height: 40px;
+        padding: 0 10px;
+        z-index: 1000;
+    }
+
+    .app-tab {
+        padding: 6px 16px;
+        height: 32px;
+        background-color: #e5e7eb;
+        color: #4b5563;
+        border: 1px solid #cbd5e1;
+        border-bottom: none;
+        border-radius: 4px 4px 0 0;
+        font-size: 13px;
+        cursor: pointer;
+        margin-right: 6px;
+    }
+
+    .app-tab.active {
+        background-color: #ffffff;
+        color: #2563eb;
+        font-weight: 600;
+        border-top: 2px solid #2563eb;
+    }
+
+    /* CAD MENU BAR */
+    .cad-menubar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 42px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 12px;
+        background: #252526;
+        border-bottom: 1px solid #444;
+        z-index: 2000;
+    }
+
+    /* Main menu buttons */
+    .cad-menu {
+        position: relative;
+        height: 100%;
+        display: flex;
+        align-items: center;
+    }
+
+    .cad-menu-trigger {
+        height: 34px;
+        padding: 0 16px;
+        color: #eee;
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        font-size: 14px;
+        cursor: pointer;
+    }
+
+    .cad-menu-trigger:hover,
+    .cad-menu.open > .cad-menu-trigger {
+        background: #3e3e42;
+    }
+
+    /* Dropdown panels */
+    .cad-menu-panel {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        min-width: 190px;
+        padding: 5px 0;
+        background: #2d2d30;
+        border: 1px solid #555;
+        box-shadow: 0 5px 12px rgba(0,0,0,0.4);
+        z-index: 2100;
+    }
+
+    .cad-menu.open > .cad-menu-panel {
+        display: block;
+    }
+
+    /* Dropdown items */
+    .cad-menu-item,
+    .cad-menu-sub-trigger {
+        width: 100%;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 9px 15px;
+        color: #eee;
+        background: transparent;
+        border: none;
+        text-align: left;
+        font-size: 13px;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .cad-menu-item:hover,
+    .cad-menu-sub-trigger:hover {
+        background: #094771;
+    }
+
+    /* Commands not implemented yet */
+    .cad-menu-item:disabled {
+        color: #777 !important;
+        cursor: not-allowed;
+        opacity: 0.65;
+    }
+
+    .cad-menu-item:disabled:hover {
+        background: transparent;
+    }
+
+    /* Submenu arrow */
+    .cad-menu-sub-trigger span {
+        margin-left: 25px;
+        color: #aaa;
+    }
+
+    /* Menu separators */
+    .cad-menu-panel hr {
+        border: none;
+        border-top: 1px solid #555;
+        margin: 5px 0;
+    }
+
+    .cad-menu-panel hr {
+        border: none;
+        border-top: 1px solid #555;
+        margin: 5px 0;
+    }
+
+    /* Nested submenus */
+    .cad-menu-sub {
+        position: relative;
+    }
+
+    .cad-menu-sub > .cad-menu-panel {
+        top: 0;
+        left: 100%;
+    }
+
+    .cad-menu-sub.open > .cad-menu-panel {
+        display: block;
+    }
+
+    /* Move CAD drawing area below menu bar */
+    #cad-canvas-container {
+        top: 42px;
+        height: calc(100% - 42px);
+    }
+
+    /* Hide the old file input toolbar */
+    .cad-file-tools {
+        display: none;
+    }
+
+    /* Responsive menu */
+    @media (max-width: 600px) {
+        .cad-menubar {
+            gap: 0;
+            padding: 0 4px;
+        }
+
+        .cad-menu-trigger {
+            padding: 0 10px;
+            font-size: 12px;
+        }
+
+        .cad-menu-panel {
+            min-width: 160px;
+        }
+    }
+
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="app-workspace">
+    <div class="app-content-area">
+        <!-- CAD Viewport -->
+        <div id="cad-pane" class="app-pane active">
+
+            <div class="cad-menubar">
+
+                <!-- 1. FILE -->
+                <div class="cad-menu">
+                    <button class="cad-menu-trigger" type="button">File</button>
+                    <div class="cad-menu-panel">
+
+                        <button class="cad-menu-item" disabled>New Drawing</button>
+
+                        <button class="cad-menu-item"
+                            onclick="document.getElementById('cad-file-input').click()">
+                            Open Drawing
+                        </button>
+
+                        <hr>
+
+                        <button class="cad-menu-item" disabled>Open Recent</button>
+                        <button class="cad-menu-item" disabled>Save</button>
+                        <button class="cad-menu-item" disabled>Save As</button>
+
+                        <hr>
+
+                        <div class="cad-menu-sub">
+                            <button class="cad-menu-sub-trigger" type="button">
+                                Import <span>›</span>
+                            </button>
+                            <div class="cad-menu-panel">
+                                <button class="cad-menu-item"
+                                    onclick="document.getElementById('cad-file-input').click()">
+                                    DXF / DWG
+                                </button>
+                                <button class="cad-menu-item" disabled>PDF</button>
+                                <button class="cad-menu-item" disabled>Image</button>
+                            </div>
+                        </div>
+
+                        <div class="cad-menu-sub">
+                            <button class="cad-menu-sub-trigger" type="button">
+                                Export <span>›</span>
+                            </button>
+                            <div class="cad-menu-panel">
+                                <button class="cad-menu-item" disabled>DXF</button>
+                                <button class="cad-menu-item" disabled>DWG</button>
+                                <button class="cad-menu-item" disabled>PDF</button>
+                                <button class="cad-menu-item" disabled>SVG</button>
+                            </div>
+                        </div>
+
+                        <hr>
+                        <button class="cad-menu-item" disabled>Print / Plot</button>
+                        <button class="cad-menu-item" disabled>Drawing Properties</button>
+                        <button class="cad-menu-item" disabled>Close Drawing</button>
+
+                    </div>
+                </div>
+
+                <!-- 2. EDIT -->
+                <div class="cad-menu">
+                    <button class="cad-menu-trigger" type="button">Edit</button>
+                    <div class="cad-menu-panel">
+
+                        <button class="cad-menu-item" onclick="window.undo()">Undo</button>
+                        <button class="cad-menu-item" onclick="window.redo()">Redo</button>
+
+                        <hr>
+
+                        <button class="cad-menu-item" disabled>Cut</button>
+                        <button class="cad-menu-item" disabled>Copy</button>
+                        <button class="cad-menu-item" disabled>Paste</button>
+
+                        <hr>
+
+                        <button class="cad-menu-item" disabled>Select All</button>
+                        <button class="cad-menu-item" onclick="window.setTool('select')">
+                            Deselect / Select Mode
+                        </button>
+                        <button class="cad-menu-item" disabled>Find / Replace</button>
+
+                    </div>
+                </div>
+
+                <!-- 3. DRAW -->
+                <div class="cad-menu">
+                    <button class="cad-menu-trigger" type="button">Draw</button>
+                    <div class="cad-menu-panel">
+
+                        <button class="cad-menu-item" onclick="window.setTool('line')">
+                            Line
+                        </button>
+
+                        <button class="cad-menu-item" onclick="window.setTool('polyline')">
+                            Polyline
+                        </button>
+
+                        <hr>
+
+                        <div class="cad-menu-sub">
+                            <button class="cad-menu-sub-trigger" type="button">
+                                Shapes <span>›</span>
+                            </button>
+                            <div class="cad-menu-panel">
+                                <button class="cad-menu-item" onclick="window.setTool('rect')">
+                                    Rectangle
+                                </button>
+                                <button class="cad-menu-item" onclick="window.setTool('circle')">
+                                    Circle
+                                </button>
+                                <button class="cad-menu-item" disabled>Arc</button>
+                                <button class="cad-menu-item" disabled>Ellipse</button>
+                                <button class="cad-menu-item" disabled>Polygon</button>
+                            </div>
+                        </div>
+
+                        <div class="cad-menu-sub">
+                            <button class="cad-menu-sub-trigger" type="button">
+                                Text <span>›</span>
+                            </button>
+                            <div class="cad-menu-panel">
+                                <button class="cad-menu-item" onclick="window.setTool('text')">
+                                    Single Line Text
+                                </button>
+                                <button class="cad-menu-item" disabled>Multiline Text</button>
+                            </div>
+                        </div>
+
+                        <hr>
+
+                        <button class="cad-menu-item" disabled>Point</button>
+                        <button class="cad-menu-item" disabled>Hatch</button>
+                        <button class="cad-menu-item" disabled>Spline</button>
+
+                    </div>
+                </div>
+
+                <!-- 4. MODIFY -->
+                <div class="cad-menu">
+                    <button class="cad-menu-trigger" type="button">Modify</button>
+                    <div class="cad-menu-panel">
+
+                        <button class="cad-menu-item" onclick="window.deleteSelectedObjects()">
+                            Erase
+                        </button>
+
+                        <hr>
+
+                        <button class="cad-menu-item" onclick="window.setTool('move')">Move</button>
+                        <button class="cad-menu-item" disabled>Copy</button>
+                        <button class="cad-menu-item" disabled>Rotate</button>
+                        <button class="cad-menu-item" disabled>Scale</button>
+                        <button class="cad-menu-item" disabled>Mirror</button>
+                        <button class="cad-menu-item" disabled>Offset</button>
+
+                        <hr>
+
+                        <button class="cad-menu-item" disabled>Trim</button>
+                        <button class="cad-menu-item" disabled>Extend</button>
+                        <button class="cad-menu-item" disabled>Fillet</button>
+                        <button class="cad-menu-item" disabled>Chamfer</button>
+                        <button class="cad-menu-item" disabled>Stretch</button>
+
+                        <hr>
+
+                        <button class="cad-menu-item" disabled>Array</button>
+                        <button class="cad-menu-item" disabled>Explode</button>
+                        <button class="cad-menu-item" disabled>Join</button>
+
+                    </div>
+                </div>
+
+                <!-- 5. VIEW -->
+                <div class="cad-menu">
+                    <button class="cad-menu-trigger" type="button">View</button>
+                    <div class="cad-menu-panel">
+
+                        <div class="cad-menu-sub">
+                            <button class="cad-menu-sub-trigger" type="button">
+                                Zoom <span>›</span>
+                            </button>
+                            <div class="cad-menu-panel">
+                                <button class="cad-menu-item" onclick="window.resetZoom()">
+                                    Zoom Extents
+                                </button>
+                                <button class="cad-menu-item" disabled>Zoom Window</button>
+                                <button class="cad-menu-item" disabled>Zoom Previous</button>
+                                <button class="cad-menu-item" disabled>Zoom In</button>
+                                <button class="cad-menu-item" disabled>Zoom Out</button>
+                            </div>
+                        </div>
+
+                        <button class="cad-menu-item" disabled>Pan</button>
+
+                        <hr>
+
+                        <button class="cad-menu-item" onclick="window.toggleGrid()">
+                            Toggle Grid
+                        </button>
+                        <button class="cad-menu-item" onclick="window.toggleOsnap()">
+                            Object Snap
+                        </button>
+                        <button class="cad-menu-item" onclick="window.toggleOrtho()">
+                            Ortho Mode
+                        </button>
+                        <button class="cad-menu-item" onclick="window.toggleGridSnap()">
+                            Grid Snap
+                        </button>
+
+                        <hr>
+
+                        <button class="cad-menu-item" disabled>Full Screen</button>
+
+                    </div>
+                </div>
+
+                <!-- 6. INSERT -->
+                <div class="cad-menu">
+                    <button class="cad-menu-trigger" type="button">Insert</button>
+                    <div class="cad-menu-panel">
+                        <button class="cad-menu-item" disabled>Block</button>
+                        <button class="cad-menu-item" disabled>Insert Block</button>
+                        <button class="cad-menu-item" disabled>External Reference</button>
+                        <button class="cad-menu-item" disabled>Image</button>
+                        <button class="cad-menu-item" disabled>PDF Underlay</button>
+                        <button class="cad-menu-item" disabled>Table</button>
+                    </div>
+                </div>
+
+                <!-- 7. FORMAT -->
+                <div class="cad-menu">
+                    <button class="cad-menu-trigger" type="button">Format</button>
+                    <div class="cad-menu-panel">
+                        <button class="cad-menu-item" disabled>Layer Manager</button>
+                        <button class="cad-menu-item" disabled>Layer Properties</button>
+                        <hr>
+                        <button class="cad-menu-item" disabled>Text Style</button>
+                        <button class="cad-menu-item" disabled>Dimension Style</button>
+                        <button class="cad-menu-item" disabled>Linetype</button>
+                        <button class="cad-menu-item" disabled>Lineweight</button>
+                        <button class="cad-menu-item" disabled>Color</button>
+                        <hr>
+                        <button class="cad-menu-item" disabled>Drawing Units</button>
+                        <button class="cad-menu-item" disabled>Drawing Limits</button>
+                    </div>
+                </div>
+
+                <!-- 8. DIMENSION -->
+                <div class="cad-menu">
+                    <button class="cad-menu-trigger" type="button">Dimension</button>
+                    <div class="cad-menu-panel">
+                        <button class="cad-menu-item" disabled>Linear</button>
+                        <button class="cad-menu-item" disabled>Aligned</button>
+                        <button class="cad-menu-item" disabled>Angular</button>
+                        <button class="cad-menu-item" disabled>Radius</button>
+                        <button class="cad-menu-item" disabled>Diameter</button>
+                        <button class="cad-menu-item" disabled>Ordinate</button>
+                        <hr>
+                        <button class="cad-menu-item" disabled>Dimension Style</button>
+                    </div>
+                </div>
+
+                <!-- 9. TOOLS -->
+                <div class="cad-menu">
+                    <button class="cad-menu-trigger" type="button">Tools</button>
+                    <div class="cad-menu-panel">
+                        <button class="cad-menu-item" onclick="window.setTool('dist')">
+                            Measure Distance
+                        </button>
+                        <button class="cad-menu-item" onclick="window.setTool('id')">
+                            Coordinate Inquiry
+                        </button>
+                        <hr>
+                        <button class="cad-menu-item" disabled>Measure Area</button>
+                        <button class="cad-menu-item" disabled>Calculator</button>
+                        <button class="cad-menu-item" disabled>Object Properties</button>
+                        <button class="cad-menu-item" disabled>Drawing Audit</button>
+                        <button class="cad-menu-item" disabled>Purge</button>
+                        <button class="cad-menu-item" disabled>Options</button>
+                    </div>
+                </div>
+
+                <!-- 10. WINDOW -->
+                <div class="cad-menu">
+                    <button class="cad-menu-trigger" type="button">Window</button>
+                    <div class="cad-menu-panel">
+                        <button class="cad-menu-item" onclick="switchAppTab('cad')">
+                            CAD Workspace
+                        </button>
+                        <button class="cad-menu-item" onclick="switchAppTab('spreadsheet')">
+                            Spreadsheet
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 11. HELP -->
+                <div class="cad-menu">
+                    <button class="cad-menu-trigger" type="button">Help</button>
+                    <div class="cad-menu-panel">
+                        <button class="cad-menu-item" disabled>Command Reference</button>
+                        <button class="cad-menu-item" disabled>Keyboard Shortcuts</button>
+                        <button class="cad-menu-item" disabled>User Guide</button>
+                        <hr>
+                        <button class="cad-menu-item" disabled>About SAFAR EDGE CAD</button>
+                    </div>
+                </div>
+
+            </div>
+            
+            <!-- CAD FILE OPEN -->
+            <div class="cad-file-tools"
+                data-convert-url="{% url 'cad_convert_dwg' %}">
+
+                <label for="cad-file-input">Open Drawing:</label>
+
+                <input
+                    type="file"
+                    id="cad-file-input"
+                    accept=".dxf,.dwg"
+                >
+
+                <span id="cad-file-status">
+                    DXF / DWG
+                </span>
+
+            </div>
+
+            <div id="cad-canvas-container"></div>
+
+            <div class="cad-command-bar">
+                <span id="cad-command-text">Command: SELECT</span>
+                <span id="cad-coords">X: 0.00 | Y: 0.00</span>
+            </div>
+        </div>
+
+        <!-- Luckysheet Viewport -->
+        <div id="spreadsheet-pane" class="app-pane">
+            <div id="luckysheet"></div>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="app-tab-bar">
+        <button class="app-tab active" id="tab-cad" onclick="switchAppTab('cad')">{{ tool_title }} (CAD)</button>
+        <button class="app-tab" id="tab-spreadsheet" onclick="switchAppTab('spreadsheet')">Spreadsheet</button>
+    </div>
+</div>
+{% endblock %}
+
+
+{% block extra_js %}
+
+<!-- DXF Parser Library -->
+<script src="https://cdn.jsdelivr.net/npm/dxf-parser@1.1.2/dist/dxf-parser.js"></script>
+
+<!-- CAD Viewer -->
+<script src="{% static 'js/cad-viewer.js' %}"></script>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    // CAD MAIN MENU CLICK HANDLING
+    document.querySelectorAll('.cad-menu-trigger').forEach(function(trigger) {
+        trigger.addEventListener('click', function(event) {
+            event.stopPropagation();
+
+            const currentMenu = this.closest('.cad-menu');
+
+            // Close other main menus
+            document.querySelectorAll('.cad-menu').forEach(function(menu) {
+                if (menu !== currentMenu) {
+                    menu.classList.remove('open');
+                    menu.querySelectorAll('.cad-menu-sub').forEach(function(sub) {
+                        sub.classList.remove('open');
+                    });
+                }
+            });
+
+            // Toggle selected menu
+            currentMenu.classList.toggle('open');
+        });
+    });
+
+    // CAD SUBMENU CLICK HANDLING
+    document.querySelectorAll('.cad-menu-sub-trigger').forEach(function(trigger) {
+        trigger.addEventListener('click', function(event) {
+            event.stopPropagation();
+
+            const currentSubmenu = this.closest('.cad-menu-sub');
+
+            // Close other submenus at the same level
+            currentSubmenu.parentElement
+                .querySelectorAll('.cad-menu-sub')
+                .forEach(function(submenu) {
+                    if (submenu !== currentSubmenu) {
+                        submenu.classList.remove('open');
+                    }
+                });
+
+            currentSubmenu.classList.toggle('open');
+        });
+    });
+
+    // Close menus when clicking outside
+    document.addEventListener('click', function(event) {
+        if (!event.target.closest('.cad-menubar')) {
+            document.querySelectorAll('.cad-menu').forEach(function(menu) {
+                menu.classList.remove('open');
+                menu.querySelectorAll('.cad-menu-sub').forEach(function(sub) {
+                    sub.classList.remove('open');
+                });
+            });
+        }
+    });
+
+    // Close dropdown after selecting an item
+    document.querySelectorAll('.cad-menu-item').forEach(function(item) {
+        item.addEventListener('click', function() {
+            document.querySelectorAll('.cad-menu').forEach(function(menu) {
+                menu.classList.remove('open');
+                menu.querySelectorAll('.cad-menu-sub').forEach(function(sub) {
+                    sub.classList.remove('open');
+                });
+            });
+        });
+    });
+
+    // Initialize CAD Viewer
+    if (typeof initCADViewer === "function") {
+        initCADViewer();
+    }
+
+    // Initialize Spreadsheet
+    if (typeof luckysheet !== "undefined") {
+
+        luckysheet.create({
+            container: 'luckysheet',
+            lang: 'en',
+            showinfobar: false,
+            showsheetbar: true,
+            showstatisticBar: false,
+            enableAddRow: true,
+            allowCopy: true,
+            showtoolbar: true,
+            data: [{
+                name: "{{ tool_title|escapejs }}",
+                status: 1,
+                celldata: []
+            }]
+        });
+
+        const sheetEl = document.getElementById('luckysheet');
+
+        if (sheetEl) {
+            sheetEl.addEventListener('wheel', function(e) {
+                if (e.ctrlKey) e.preventDefault();
+            }, { passive: false });
+        }
+    }
+
+});
+
+function switchAppTab(tab) {
+
+    document.querySelectorAll('.app-pane').forEach(el =>
+        el.classList.remove('active')
+    );
+
+    document.querySelectorAll('.app-tab').forEach(el =>
+        el.classList.remove('active')
+    );
+
+    if (tab === 'cad') {
+
+        document.getElementById('cad-pane').classList.add('active');
+        document.getElementById('tab-cad').classList.add('active');
+
+    } else if (tab === 'spreadsheet') {
+
+        document.getElementById('spreadsheet-pane').classList.add('active');
+        document.getElementById('tab-spreadsheet').classList.add('active');
+
+        if (typeof luckysheet !== 'undefined') {
+            luckysheet.resize();
+        }
+    }
+}
+</script>
+
+{% endblock %}

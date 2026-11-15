@@ -1,0 +1,146 @@
+
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<link rel="stylesheet" href="{% static 'css/pdf.css' %}">
+
+<div class="mergepage-workspace">
+
+    <div class="mergepage-panel">
+
+        <!-- HEADER -->
+        <div class="mergepage-header">
+            <h1>Merge PDF Pages</h1>
+            <p>PDF Page Sequence Processing Utility</p>
+        </div>
+
+        <!-- CONTENT -->
+        <div class="mergepage-body">
+
+            {% if error %}
+                <p class="mergepage-error">{{ error }}</p>
+            {% endif %}
+
+            <form
+                action="{% url 'pdf_mergepage' %}"
+                method="post"
+                enctype="multipart/form-data"
+            >
+
+                {% csrf_token %}
+
+                <div class="mergepage-grid">
+
+                    <!-- LEFT COLUMN -->
+                    <div class="mergepage-column">
+
+                        <div class="form-group">
+
+                            <label for="pdf_file">
+                                Select PDF File
+                            </label>
+
+                            <input
+                                type="file"
+                                name="pdf_file"
+                                id="pdf_file"
+                                accept=".pdf,application/pdf"
+                                required
+                            >
+
+                            <p class="mergepage-help">
+                                Select the PDF document from which pages
+                                are to be extracted and merged.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                    <!-- RIGHT COLUMN -->
+                    <div class="mergepage-column">
+
+                        <div class="form-group">
+
+                            <label for="page_sequence">
+                                Enter Page Sequence
+                            </label>
+
+                            <input
+                                type="text"
+                                name="page_sequence"
+                                id="page_sequence"
+                                placeholder="Example: 1, 3, 5-8, 2"
+                                value="{{ selected_sequence|default:'' }}"
+                                required
+                            >
+
+                            <p class="mergepage-help">
+                                Enter individual page numbers or ranges
+                                in your required sequence.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <!-- INSTRUCTIONS -->
+                <div class="form-group" style="margin-top:16px;">
+
+                    <label>Sequence Instructions</label>
+
+                    <div class="mergepage-status">
+                        <p>
+                            Example: 1, 3, 5-8, 2. Pages will be merged
+                            in the exact order entered. Reverse ranges
+                            such as 8-5 are also supported.
+                        </p>
+                    </div>
+
+                </div>
+
+                <!-- ACTIONS -->
+                <div class="mergepage-actions">
+
+                    <span class="mergepage-help">
+                        Custom page sequence | Single PDF output
+                    </span>
+
+                    <div class="mergepage-button-group">
+
+                        <button
+                            type="submit"
+                            class="btn btn-merge"
+                        >
+                            Merge Pages &amp; Download
+                        </button>
+
+                        <a
+                            href="{% url 'pdf_mergepage' %}"
+                            class="btn btn-select"
+                        >
+                            Reset
+                        </a>
+
+                    </div>
+
+                </div>
+
+            </form>
+
+        </div>
+
+        <!-- FOOTER -->
+        <div class="mergepage-footer">
+            <span>PDF DOCUMENT PROCESSING</span>
+            <span>Merge PDF Pages Utility</span>
+        </div>
+
+    </div>
+
+</div>
+
+{% endblock %}

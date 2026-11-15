@@ -1,0 +1,175 @@
+// 8. KEYBOARD & INTERACTION LISTENERS
+// ==========================================
+function isTextEntryElement(el) {
+    return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+}
+
+function isCadVisible() {
+    const c = document.getElementById('cad-canvas-container');
+    return !!c && c.offsetParent !== null;
+}
+
+function onKeyDown(event) {
+    if (!isCadVisible()) return;   // the Estimation tab is showing: leave the keyboard alone
+
+    const typingInCmd = (event.target === cmdInputEl);
+    const typingElsewhere = !typingInCmd && isTextEntryElement(event.target);
+    const isFKey = /^F\d+$/.test(event.key);
+    const hasCtrl = event.ctrlKey || event.metaKey;
+
+    // The command line handles its own keys (Enter, Space, Esc, arrows, Tab ...)
+    if (typingInCmd && !isFKey && !hasCtrl) return;
+
+    // Status-bar function keys (same as AutoCAD)
+    if (event.key === 'F3') { event.preventDefault(); toggleOsnap(); return; }
+    if (event.key === 'F7') { event.preventDefault(); toggleGrid(); return; }
+    if (event.key === 'F8') { event.preventDefault(); toggleOrtho(); return; }
+    if (event.key === 'F9') { event.preventDefault(); toggleGridSnap(); return; }
+
+    // Ctrl+Z = UNDO, Ctrl+Y / Ctrl+Shift+Z = REDO, Ctrl+A = select all
+    if (hasCtrl) {
+        if (typingElsewhere) return;
+        if (typingInCmd && cmdInputEl.value) return;   // normal text editing in the command line
+        const k = event.key.toLowerCase();
+        if (k === 'c') {
+            copySelectedObjects();
+            event.preventDefault();
+        }
+        else if (k === 'v') {
+            pasteCadObjects();
+            event.preventDefault();
+        }
+        else if (k === 'z' && !event.shiftKey) {
+            undo();
+            event.preventDefault();
+        }
+        else if (k === 'y' || (k === 'z' && event.shiftKey)) {
+            redo();
+            event.preventDefault();
+        }
+        else if (k === 'a') {
+            selectAll();
+            event.preventDefault();
+        }
+
+        return;
+    }
+
+    // Other text fields (the dynamic-input box, page inputs): only ESC still cancels the command
+    if (typingElsewhere) {
+        if (event.key === 'Escape') cancelCommand();
+        return;
+    }
+
+    // ENTER / SPACE = finish the command, or repeat the last one
+    if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        commandEnter();
+        return;
+    }
+
+    // Delete / Backspace erase the selection
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+        deleteSelectedObjects();
+        event.preventDefault();
+        return;
+    }
+
+    if (event.key === 'Escape') {
+        cancelCommand();
+        return;
+    }
+
+    // ALL printable keyboard input from the drawing area
+    // goes to the small input box beside the cursor.
+    if (
+        dynamicInputBox &&
+        !event.altKey &&
+        event.key.length === 1 &&
+        event.key !== ' '
+    ) {
+        showDynamicInput();
+
+        if (document.activeElement !== dynamicInputBox) {
+            dynamicInputBox.focus();
+        }
+
+        return;
+    }
+}
+
+function onMouseWheel(event) {
+    event.preventDefault();
+    // AutoCAD zooms toward the cursor: keep the world point under the mouse fixed
+    const rect = renderer.domElement.getBoundingClientRect();
+    const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    mouse.x = ndcX; mouse.y = ndcY;
+
+    const halfW = (camera.right - camera.left) / 2;
+    const halfH = (camera.top - camera.bottom) / 2;
+    const oldZoom = camera.zoom;
+    const wx = camera.position.x + (ndcX * halfW) / oldZoom;
+    const wy = camera.position.y + (ndcY * halfH) / oldZoom;
+
+    const zoomFactor = 1.1;
+    let newZoom = event.deltaY < 0 ? oldZoom * zoomFactor : oldZoom / zoomFactor;
+    newZoom = Math.max(0.05, Math.min(newZoom, 100));
+    if (newZoom === oldZoom) return;
+
+    camera.zoom = newZoom;
+    camera.position.x = wx - (ndcX * halfW) / newZoom;
+    camera.position.y = wy - (ndcY * halfH) / newZoom;
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld(true);
+
+    const pt = getDrawPoint();
+
+    if (currentTool === 'copy' && copyPreview) {
+        updateCopyPreview(pt);
+    }
+    else if (currentTool === 'move' && movePreview) {
+        updateMovePreview(pt);
+    }
+    else if (isDrawing && basePoint) {
+        updateActiveBufferPreview(pt);
+    }
+}
+
+function onWindowResize() {
+    const container = document.getElementById('cad-canvas-container');
+    if (!container || !renderer) return;
+    const aspect = container.clientWidth / container.clientHeight;
+    const frustumSize = 200;
+    camera.left = (-frustumSize * aspect) / 2;
+    camera.right = (frustumSize * aspect) / 2;
+    camera.top = frustumSize / 2;
+    camera.bottom = -frustumSize / 2;
+    camera.updateProjectionMatrix();
+    renderer.setSize(container.clientWidth, container.clientHeight);
+}
+
+function resetZoom() { zoomExtents(); }
+
+function toggleGrid() {
+    if (gridHelper) {
+        gridHelper.visible = !gridHelper.visible;
+        notify(`<Grid ${gridHelper.visible ? 'on' : 'off'}>`);
+        updateStatusBar();
+    }
+}
+
+// Global Export Bindings
+window.initCADViewer = initCADViewer;
+window.setTool = setTool;
+window.toggleGrid = toggleGrid;
+window.resetZoom = resetZoom;
+window.deleteSelectedObjects = deleteSelectedObjects;
+window.runCADCommand = processCommandText;
+window.undo = undo;
+window.redo = redo;
+window.zoomExtents = zoomExtents;
+window.toggleOsnap = toggleOsnap;
+window.toggleOrtho = toggleOrtho;
+window.toggleGridSnap = toggleGridSnap;
+

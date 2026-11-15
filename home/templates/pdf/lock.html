@@ -1,0 +1,143 @@
+
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<link rel="stylesheet" href="{% static 'css/pdf.css' %}">
+
+<div class="lock-workspace">
+
+    <div class="lock-panel">
+
+        <!-- HEADER -->
+        <div class="lock-header">
+            <h1>Lock PDF</h1>
+            <p>PDF Document Password Protection</p>
+        </div>
+
+        <!-- CONTENT -->
+        <div class="lock-body">
+
+            {% if error %}
+                <p class="lock-error">{{ error }}</p>
+            {% endif %}
+
+            <form
+                action="{% url 'pdf_lock' %}"
+                method="post"
+                enctype="multipart/form-data"
+            >
+
+                {% csrf_token %}
+
+                <div class="lock-grid">
+
+                    <!-- LEFT COLUMN -->
+                    <div class="lock-column">
+
+                        <div class="form-group">
+
+                            <label for="pdfs">
+                                Select PDF File
+                            </label>
+
+                            <input
+                                type="file"
+                                name="pdfs"
+                                id="pdfs"
+                                accept=".pdf,application/pdf"
+                                required
+                            >
+
+                            <p class="lock-help">
+                                Select the PDF file you want to protect.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                    <!-- RIGHT COLUMN -->
+                    <div class="lock-column">
+
+                        <div class="form-group">
+
+                            <label for="password">
+                                Enter PDF Password
+                            </label>
+
+                            <input
+                                type="password"
+                                name="password"
+                                id="password"
+                                placeholder="Enter password"
+                                autocomplete="new-password"
+                                required
+                            >
+
+                            <p class="lock-help">
+                                This password will be required to open the protected PDF.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <!-- STATUS -->
+                <div class="form-group" style="margin-top:16px;">
+
+                    <label>Processing Information</label>
+
+                    <div class="lock-status">
+                        <p id="status">
+                            Ready to protect your PDF.
+                        </p>
+                    </div>
+
+                </div>
+
+                <!-- ACTIONS -->
+                <div class="lock-actions">
+
+                    <span class="lock-help">
+                        PDF Password Protection Utility
+                    </span>
+
+                    <div class="lock-button-group">
+
+                        <button
+                            type="submit"
+                            class="btn btn-merge"
+                            id="lock-button"
+                        >
+                            Add Password &amp; Download
+                        </button>
+
+                        <a
+                            href="{% url 'pdf_lock' %}"
+                            class="btn btn-select"
+                        >
+                            Reset
+                        </a>
+
+                    </div>
+
+                </div>
+
+            </form>
+
+        </div>
+
+        <!-- FOOTER -->
+        <div class="lock-footer">
+            <span>PDF DOCUMENT PROCESSING</span>
+            <span>Lock PDF Utility</span>
+        </div>
+
+    </div>
+
+</div>
+
+{% endblock %}

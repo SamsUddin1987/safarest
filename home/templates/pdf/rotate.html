@@ -1,0 +1,375 @@
+
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<link rel="stylesheet" href="{% static 'css/pdf.css' %}">
+
+<div class="rotate-workspace">
+
+    <div class="rotate-panel">
+
+        <!-- HEADER -->
+        <div class="rotate-header">
+            <h1>Rotate PDF Pages</h1>
+            <p>PDF Page Rotation Processing Utility</p>
+        </div>
+
+        <!-- CONTENT -->
+        <div class="rotate-body">
+
+            {% if error %}
+                <p class="rotate-error">{{ error }}</p>
+            {% endif %}
+
+            <form
+                action="{% url 'pdf_rotate' %}"
+                method="post"
+                enctype="multipart/form-data"
+                id="rotate-pdf-form"
+            >
+
+                {% csrf_token %}
+
+                <div class="rotate-grid">
+
+                    <!-- LEFT COLUMN -->
+                    <div class="rotate-column">
+
+                        <div class="form-group">
+
+                            <label for="pdf_files">
+                                Select PDF Files
+                            </label>
+
+                            <input
+                                type="file"
+                                name="pdf_files"
+                                id="pdf_files"
+                                multiple
+                                accept=".pdf,application/pdf"
+                                required
+                            >
+
+                            <p class="rotate-help">
+                                Select one or more PDF files.
+                                Each file will be processed separately.
+                            </p>
+
+                        </div>
+
+                        <div class="form-group">
+
+                            <label>Selected PDF Files</label>
+
+                            <div class="rotate-file-list">
+                                <ol id="selected-file"></ol>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                    <!-- RIGHT COLUMN -->
+                    <div class="rotate-column">
+
+                        <div class="form-group">
+
+                            <label for="angle">
+                                Select Rotation Angle
+                            </label>
+
+                            <select name="angle" id="angle" required>
+                                <option value="">-- Select Angle --</option>
+                                <option value="90">90° Clockwise</option>
+                                <option value="180">180°</option>
+                                <option value="270">270° Clockwise</option>
+                            </select>
+
+                            <p class="rotate-help">
+                                The selected rotation will be applied
+                                to all pages of every selected PDF.
+                            </p>
+
+                        </div>
+
+                        <div class="form-group">
+
+                            <label for="skip_pages">
+                                Pages to Skip (Optional)
+                            </label>
+
+                            <input
+                                type="text"
+                                name="skip_pages"
+                                id="skip_pages"
+                                placeholder="Example: 2, 5, 8-10"
+                                style="font-size: 12px;"
+                                autocomplete="off"
+                            >
+
+                            <p class="rotate-help">
+                                Enter page numbers or ranges separated by commas.
+                                These pages will retain their original orientation.
+                                Leave blank to rotate all pages.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <!-- PROCESSING STATUS -->
+                <div class="form-group" style="margin-top:16px;">
+
+                    <label>Processing Status</label>
+
+                    <div class="rotate-status">
+                        <p id="status">Ready for processing.</p>
+                    </div>
+
+                </div>
+
+                <!-- ACTIONS -->
+                <div class="rotate-actions">
+
+                    <span class="rotate-help">
+                        Multiple PDF support | Individual downloads
+                    </span>
+
+                    <div class="rotate-button-group">
+
+                        <button
+                            type="submit"
+                            class="btn btn-merge"
+                            id="rotate-button"
+                        >
+                            Rotate PDF &amp; Download
+                        </button>
+
+                        <a
+                            href="{% url 'pdf_rotate' %}"
+                            class="btn btn-select"
+                        >
+                            Reset
+                        </a>
+
+                    </div>
+
+                </div>
+
+            </form>
+
+        </div>
+
+        <!-- FOOTER -->
+        <div class="rotate-footer">
+            <span>PDF DOCUMENT PROCESSING</span>
+            <span>Rotate PDF Utility</span>
+        </div>
+
+    </div>
+
+</div>
+
+<script>
+(function () {
+
+    const fileInput = document.getElementById("pdf_files");
+    const selectedFile = document.getElementById("selected-file");
+    const angleInput = document.getElementById("angle");
+    const skipPagesInput = document.getElementById("skip_pages");
+    const form = document.getElementById("rotate-pdf-form");
+    const rotateButton = document.getElementById("rotate-button");
+    const status = document.getElementById("status");
+
+    // Display all selected PDF filenames
+    fileInput.addEventListener("change", function () {
+
+        selectedFile.replaceChildren();
+
+        Array.from(fileInput.files).forEach(function (file, index) {
+
+            const item = document.createElement("li");
+            item.textContent = file.name;
+            selectedFile.appendChild(item);
+
+        });
+
+        status.textContent = fileInput.files.length
+            ? fileInput.files.length + " PDF file(s) selected."
+            : "Ready for processing.";
+
+    });
+
+    // Process multiple PDFs individually
+    form.addEventListener("submit", async function (event) {
+
+        event.preventDefault();
+
+        const files = Array.from(fileInput.files);
+        const angle = angleInput.value;
+        const skipPages = skipPagesInput.value.trim();
+
+        // Validate file selection
+        if (!files.length) {
+            alert("Please select at least one PDF file.");
+            return;
+        }
+
+        // Validate PDF extensions
+        const invalidFile = files.find(function (file) {
+            return !file.name.toLowerCase().endsWith(".pdf");
+        });
+
+        if (invalidFile) {
+            alert("Please select PDF files only.");
+            return;
+        }
+
+        // Validate rotation angle
+        if (!["90", "180", "270"].includes(angle)) {
+            alert("Please select a valid rotation angle.");
+            return;
+        }
+
+        rotateButton.disabled = true;
+        fileInput.disabled = true;
+        angleInput.disabled = true;
+        skipPagesInput.disabled = true;
+
+        let successCount = 0;
+        let failedCount = 0;
+
+        rotateButton.textContent = "Processing...";
+        status.textContent = "Starting PDF rotation...";
+
+        try {
+
+            // Process each PDF separately
+            for (let i = 0; i < files.length; i++) {
+
+                const file = files[i];
+
+                status.textContent =
+                    "Rotating " + (i + 1) + " of " + files.length +
+                    ": " + file.name;
+
+                const formData = new FormData();
+
+                formData.append("pdf_files", file);
+                formData.append("angle", angle);
+                formData.append("skip_pages", skipPages);
+
+                // Include Django CSRF token
+                const csrfToken = form.querySelector(
+                    '[name="csrfmiddlewaretoken"]'
+                ).value;
+
+                formData.append("csrfmiddlewaretoken", csrfToken);
+
+                try {
+
+                    const response = await fetch(form.action, {
+                        method: "POST",
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(errorText || "Processing failed.");
+                    }
+
+                    const contentType =
+                        response.headers.get("content-type") || "";
+
+                    if (!contentType.includes("application/pdf")) {
+                        throw new Error("Server did not return a PDF file.");
+                    }
+
+                    const blob = await response.blob();
+
+                    // Get filename from server response, if available
+                    const disposition =
+                        response.headers.get("content-disposition") || "";
+
+                    const filenameMatch = disposition.match(
+                        /filename\*?=(?:UTF-8''|")?([^";]+)/i
+                    );
+
+                    let outputFilename;
+
+                    if (filenameMatch) {
+                        outputFilename = decodeURIComponent(
+                            filenameMatch[1].replace(/"/g, "").trim()
+                        );
+                    } else {
+                        const originalName = file.name.replace(/\.pdf$/i, "");
+                        outputFilename = originalName + "_Rotate_" +
+                            angle + ".pdf";
+                    }
+
+                    // Download the processed PDF
+                    const downloadUrl = URL.createObjectURL(blob);
+                    const link = document.createElement("a");
+
+                    link.href = downloadUrl;
+                    link.download = outputFilename;
+
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+
+                    // Release the URL after the download has started
+                    setTimeout(function () {
+                        URL.revokeObjectURL(downloadUrl);
+                    }, 1000);
+
+                    successCount++;
+
+                } catch (error) {
+
+                    console.error("Error processing " + file.name, error);
+                    failedCount++;
+
+                }
+
+                // Small delay between individual downloads
+                if (i < files.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 800));
+                }
+
+            }
+
+            // Final status
+            status.textContent =
+                "Processing completed. Successful: " + successCount +
+                " | Failed: " + failedCount;
+
+            rotateButton.textContent = "Processing Completed";
+
+        } catch (error) {
+
+            console.error(error);
+            status.textContent = "An unexpected error occurred.";
+
+        } finally {
+
+            rotateButton.disabled = false;
+            fileInput.disabled = false;
+            angleInput.disabled = false;
+            skipPagesInput.disabled = false;
+
+            if (successCount > 0 || failedCount > 0) {
+                rotateButton.textContent = "Rotate PDF & Download";
+            }
+
+        }
+
+    });
+
+})();
+</script>
+
+{% endblock %}

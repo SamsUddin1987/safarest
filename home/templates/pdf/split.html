@@ -1,0 +1,165 @@
+
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<link rel="stylesheet" href="{% static 'css/pdf.css' %}">
+
+<div class="split-workspace">
+
+    <div class="split-panel">
+
+        <!-- HEADER -->
+        <div class="split-header">
+            <h1>Split PDF</h1>
+            <p>PDF Document Page Extraction Utility</p>
+        </div>
+
+        <!-- CONTENT -->
+        <div class="split-body">
+
+            {% if error %}
+                <p class="split-error">{{ error }}</p>
+            {% endif %}
+
+            <form
+                action="{% url 'pdf_split' %}"
+                method="post"
+                enctype="multipart/form-data"
+            >
+
+                {% csrf_token %}
+
+                <!-- FILE SELECTION -->
+                <div class="form-group">
+
+                    <label for="pdfs">
+                        Select PDF File
+                    </label>
+
+                    <input
+                        type="file"
+                        name="pdfs"
+                        id="pdfs"
+                        accept=".pdf,application/pdf"
+                        required
+                    >
+
+                    <p class="split-help">
+                        Select the PDF document from which you want to extract pages.
+                    </p>
+
+                </div>
+
+                <!-- PAGE RANGE -->
+                <div class="split-grid">
+
+                    <!-- START PAGE -->
+                    <div class="split-column">
+
+                        <div class="form-group">
+
+                            <label for="start_page">
+                                Starting Page (1-based)
+                            </label>
+
+                            <input
+                                type="number"
+                                name="start_page"
+                                id="start_page"
+                                min="1"
+                                value="1"
+                                required
+                            >
+
+                            <p class="split-help">
+                                Enter the first page number to extract.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                    <!-- END PAGE -->
+                    <div class="split-column">
+
+                        <div class="form-group">
+
+                            <label for="end_page">
+                                Ending Page
+                            </label>
+
+                            <input
+                                type="number"
+                                name="end_page"
+                                id="end_page"
+                                min="1"
+                                required
+                            >
+
+                            <p class="split-help">
+                                Enter the last page number to extract.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <!-- STATUS -->
+                <div class="form-group" style="margin-top:16px;">
+
+                    <label>Processing Information</label>
+
+                    <div class="split-status">
+                        <p id="status">
+                            Ready to split your PDF.
+                        </p>
+                    </div>
+
+                </div>
+
+                <!-- ACTIONS -->
+                <div class="split-actions">
+
+                    <span class="split-help">
+                        PDF Page Extraction Utility
+                    </span>
+
+                    <div class="split-button-group">
+
+                        <button
+                            type="submit"
+                            class="btn btn-merge"
+                            id="split-button"
+                        >
+                            Split &amp; Download
+                        </button>
+
+                        <a
+                            href="{% url 'pdf_split' %}"
+                            class="btn btn-select"
+                        >
+                            Reset
+                        </a>
+
+                    </div>
+
+                </div>
+
+            </form>
+
+        </div>
+
+        <!-- FOOTER -->
+        <div class="split-footer">
+            <span>PDF DOCUMENT PROCESSING</span>
+            <span>Split PDF Utility</span>
+        </div>
+
+    </div>
+
+</div>
+
+{% endblock %}

@@ -1,0 +1,475 @@
+// 4. MULTI-SELECTION & MOUSE INTERACTION
+// ==========================================
+
+function onMouseMove(event) {
+    const rect = renderer.domElement.getBoundingClientRect();
+
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    const pt = getDrawPoint();
+
+    // Update coordinate display
+    const coordEl = document.getElementById('cad-coords');
+    if (coordEl) {
+        coordEl.innerText =
+            `X: ${formatVal(pt.x)} | Y: ${formatVal(pt.y)}`;
+    }
+
+    // Dynamic input position
+    if (dynamicInputHUD) {
+        dynamicInputHUD.style.left =
+            `${event.clientX - rect.left + 18}px`;
+        dynamicInputHUD.style.top =
+            `${event.clientY - rect.top + 18}px`;
+    }
+
+    // MIDDLE MOUSE PAN
+    if (isPanning) {
+        const worldPerPixel =
+            (camera.right - camera.left) /
+            camera.zoom / rect.width;
+
+        camera.position.x -=
+            (event.clientX - panLastX) * worldPerPixel;
+
+        camera.position.y +=
+            (event.clientY - panLastY) * worldPerPixel;
+
+        panLastX = event.clientX;
+        panLastY = event.clientY;
+
+        camera.updateProjectionMatrix();
+        camera.updateMatrixWorld(true);
+
+        const panPt = getDrawPoint();
+
+        if (currentTool === 'copy' && copyPreview) {
+            updateCopyPreview(panPt);
+        }
+        else if (currentTool === 'move' && movePreview) {
+            updateMovePreview(panPt);
+        }
+        else if (isDrawing && basePoint) {
+            updateActiveBufferPreview(panPt);
+        }
+
+        return;
+    }
+
+    // DIRECT OBJECT DRAGGING
+    if (objectDrag) {
+
+        const screenDistance = Math.hypot(
+            event.clientX - objectDrag.startClientX,
+            event.clientY - objectDrag.startClientY
+        );
+
+        // Ignore small accidental mouse movements
+        if (!objectDrag.moved) {
+            if (screenDistance < OBJECT_DRAG_THRESHOLD) {
+                return;
+            }
+
+            objectDrag.moved = true;
+            renderer.domElement.style.cursor = 'grabbing';
+        }
+
+        // Calculate movement in drawing coordinates
+        const dx = pt.x - objectDrag.lastPoint.x;
+        const dy = pt.y - objectDrag.lastPoint.y;
+
+        if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
+
+            translateCadObjects(
+                objectDrag.objects,
+                dx,
+                dy
+            );
+
+            objectDrag.dx += dx;
+            objectDrag.dy += dy;
+
+            objectDrag.lastPoint.copy(pt);
+        }
+
+        return;
+    }
+
+    // WINDOW / CROSSING SELECTION
+    if (updateBoxSelect(event)) {
+        return;
+    }
+
+    // HOVER EFFECT
+    if (currentTool === 'select' || currentTool === 'erase') {
+
+        raycaster.setFromCamera(mouse, camera);
+
+        const intersects =
+            raycaster.intersectObjects(drawnObjects, true);
+
+        if (intersects.length > 0) {
+
+            if (hoverObject !== intersects[0].object) {
+
+                clearHover();
+
+                hoverObject = intersects[0].object;
+
+                if (!selectedObjects.includes(hoverObject)) {
+                    hoverObject.material.color.setHex(0x00ffff);
+                }
+            }
+
+        } else {
+            clearHover();
+        }
+    }
+
+    // MOVE LIVE PREVIEW
+    if (currentTool === 'move' && isDrawing && movePreview) {
+        updateMovePreview(pt);
+        return;
+    }
+
+    // COPY LIVE PREVIEW
+    if (currentTool === 'copy' && isDrawing && copyPreview) {
+        updateCopyPreview(pt);
+        return;
+    }
+
+    // NORMAL DRAWING PREVIEW
+    if (isDrawing && basePoint) {
+        updateActiveBufferPreview(pt);
+    }
+}
+
+function clearHover() {
+    if (hoverObject && !selectedObjects.includes(hoverObject)) {
+        hoverObject.material.color.setHex(hoverObject.userData.originalColor || 0xffffff);
+        hoverObject = null;
+    }
+}
+
+function clearSelection() {
+    selectedObjects.forEach(obj => {
+        obj.material.color.setHex(obj.userData.originalColor || 0xffffff);
+    });
+    selectedObjects = [];
+}
+
+function onCanvasClick(event) {
+
+    // Ignore the click following a completed box selection or drag
+    if (suppressNextClick) {
+        suppressNextClick = false;
+        return;
+    }
+
+    // Hide cursor input when the user clicks the drawing area
+    hideDynamicInput();
+
+    // Refresh mouse coordinates from the actual click location
+    const rect = renderer.domElement.getBoundingClientRect();
+    
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    // Obtain the exact drawing coordinate, including OSNAP
+    const pt = getDrawPoint();
+
+    // Multi-Selection Logic in Select Mode
+    if (currentTool === 'select') {
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(drawnObjects, true);
+
+        if (intersects.length > 0) {
+            const clickedObj = intersects[0].object;
+
+            if (event.shiftKey) {
+                // Shift + Click to toggle individual items
+                if (selectedObjects.includes(clickedObj)) {
+                    selectedObjects = selectedObjects.filter(o => o !== clickedObj);
+                    clickedObj.material.color.setHex(clickedObj.userData.originalColor || 0xffffff);
+                } else {
+                    selectedObjects.push(clickedObj);
+                    clickedObj.material.color.setHex(0x00ffff);
+                }
+            } else {
+                // Regular Click selects multiple or replaces selection
+                if (!selectedObjects.includes(clickedObj)) {
+                    clearSelection();
+                    selectedObjects.push(clickedObj);
+                    clickedObj.material.color.setHex(0x00ffff);
+                }
+            }
+            setCommandPrompt(`Selected ${selectedObjects.length} object(s). Press DELETE to erase.`);
+            return;
+        } else if (!event.shiftKey) {
+            clearSelection();
+            setCommandPrompt('Command: Ready. Select objects or pick a tool.');
+        }
+    }
+
+    if (currentTool === 'select' || currentTool === 'pan') return;  // empty click in SELECT must not start a draw
+
+    handleToolClick(pt);
+}
+
+// ==========================================
+// 4B. AUTOCAD WINDOW / CROSSING BOX SELECTION
+//     Left -> Right drag = WINDOW   (blue, solid)  : object must be fully inside
+//     Right -> Left drag = CROSSING (green, dashed): object only needs to touch
+// ==========================================
+function setupSelectionBox(container) {
+    if (document.getElementById('cad-select-box')) return;
+    boxEl = document.createElement('div');
+    boxEl.id = 'cad-select-box';
+    boxEl.style.cssText = 'position:absolute; display:none; pointer-events:none; z-index:900; box-sizing:border-box;';
+    container.appendChild(boxEl);
+}
+
+function onMouseDown(event) {
+    if (osnapMenuEl) osnapMenuEl.style.display = 'none';
+
+    // Middle button (wheel press) = PAN, works in every tool
+    if (event.button === 1) {
+        event.preventDefault();  // stops the browser's auto-scroll circle
+        const now = performance.now();
+        if (now - lastMiddleDown < 350) {   // double-click wheel = Zoom Extents
+            lastMiddleDown = 0;
+            zoomExtents();
+            return;
+        }
+        lastMiddleDown = now;
+        isPanning = true;
+        panLastX = event.clientX;
+        panLastY = event.clientY;
+        renderer.domElement.style.cursor = 'grabbing';
+        return;
+    }
+
+    // PAN command: left mouse button starts dragging the drawing
+    if (event.button === 0 && currentTool === 'pan') {
+        event.preventDefault();
+
+        isPanning = true;
+        panLastX = event.clientX;
+        panLastY = event.clientY;
+
+        renderer.domElement.style.cursor = 'grabbing';
+        return;
+    }
+
+    if (event.button !== 0 || currentTool !== 'select') return;
+
+    const rect = renderer.domElement.getBoundingClientRect();
+
+    // Update mouse coordinates before checking the clicked object
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    boxSel.down = true;
+    boxSel.active = false;
+    boxSel.startX = boxSel.curX = event.clientX - rect.left;
+    boxSel.startY = boxSel.curY = event.clientY - rect.top;
+    boxSel.shift = event.shiftKey;
+}
+
+// Returns true while a box drag is in progress (so hover is skipped)
+function updateBoxSelect(event) {
+    if (!boxSel.down) return false;
+    const rect = renderer.domElement.getBoundingClientRect();
+    boxSel.curX = event.clientX - rect.left;
+    boxSel.curY = event.clientY - rect.top;
+
+    const dx = boxSel.curX - boxSel.startX;
+    const dy = boxSel.curY - boxSel.startY;
+
+    if (!boxSel.active) {
+        if (Math.hypot(dx, dy) < BOX_DRAG_THRESHOLD) return false;  // still just a click
+        boxSel.active = true;
+        clearHover();
+    }
+
+    const crossing = dx < 0;  // right-to-left
+    boxEl.style.display = 'block';
+    boxEl.style.left = Math.min(boxSel.startX, boxSel.curX) + 'px';
+    boxEl.style.top = Math.min(boxSel.startY, boxSel.curY) + 'px';
+    boxEl.style.width = Math.abs(dx) + 'px';
+    boxEl.style.height = Math.abs(dy) + 'px';
+    if (crossing) {
+        boxEl.style.border = '1px dashed #3aff6a';
+        boxEl.style.background = 'rgba(58, 255, 106, 0.15)';
+    } else {
+        boxEl.style.border = '1px solid #3a8bff';
+        boxEl.style.background = 'rgba(58, 139, 255, 0.18)';
+    }
+    setCommandPrompt(crossing ? 'SELECT — CROSSING (right to left): touch objects.'
+                              : 'SELECT — WINDOW (left to right): enclose objects.');
+    return true;
+}
+
+function onMouseUp(event) {
+    // Finish PAN drag; remain in PAN mode for another drag
+    if (event.button === 0 && currentTool === 'pan' && isPanning) {
+        isPanning = false;
+        renderer.domElement.style.cursor = 'grab';
+
+        suppressNextClick = true;
+        setTimeout(() => {
+            suppressNextClick = false;
+        }, 0);
+
+        return;
+    }
+
+    // Finish direct object dragging
+    if (event.button === 0 && objectDrag) {
+
+        const drag = objectDrag;
+        objectDrag = null;
+
+        renderer.domElement.style.cursor = '';
+
+        if (drag.moved &&
+            (Math.abs(drag.dx) > 0.000001 ||
+            Math.abs(drag.dy) > 0.000001)) {
+
+            undoStack.push({
+                type: 'move',
+                objs: drag.objects,
+                dx: drag.dx,
+                dy: drag.dy
+            });
+
+            redoStack = [];
+
+            notify(`Moved ${drag.objects.length} object(s).`);
+
+            // Prevent the click event following the drag
+            suppressNextClick = true;
+
+            setTimeout(() => {
+                suppressNextClick = false;
+            }, 0);
+        }
+
+        return;
+    }
+
+    if (event.button === 1 && isPanning) {
+        isPanning = false;
+        renderer.domElement.style.cursor =
+            currentTool === 'pan' ? 'grab' : '';
+        return;
+    }
+    if (!boxSel.down) return;
+    const wasActive = boxSel.active;
+    boxSel.down = false;
+    boxSel.active = false;
+    if (boxEl) boxEl.style.display = 'none';
+    if (!wasActive) return;  // plain click -> onCanvasClick handles it
+
+    // Swallow the click event that the browser fires right after this mouseup
+    suppressNextClick = true;
+    setTimeout(() => { suppressNextClick = false; }, 0);
+
+    const crossing = boxSel.curX < boxSel.startX;
+    const r = {
+        minX: Math.min(boxSel.startX, boxSel.curX), maxX: Math.max(boxSel.startX, boxSel.curX),
+        minY: Math.min(boxSel.startY, boxSel.curY), maxY: Math.max(boxSel.startY, boxSel.curY)
+    };
+    applyBoxSelection(r, crossing, boxSel.shift || event.shiftKey);
+}
+
+function cancelBoxSelect() {
+    boxSel.down = false;
+    boxSel.active = false;
+    if (boxEl) boxEl.style.display = 'none';
+}
+
+function applyBoxSelection(r, crossing, additive) {
+    if (!additive) clearSelection();
+
+    drawnObjects.forEach(obj => {
+        if (selectedObjects.includes(obj)) return;
+        const g = getScreenGeometry(obj);
+        const hit = crossing ? crossesRect(g, r) : insideRect(g, r);
+        if (hit) {
+            selectedObjects.push(obj);
+            obj.material.color.setHex(0x00ffff);
+        }
+    });
+
+    setCommandPrompt(`${crossing ? 'Crossing' : 'Window'}: ${selectedObjects.length} object(s) selected. Press DELETE to erase.`);
+}
+
+// Convert an entity to screen-pixel points (relative to the canvas)
+function getScreenGeometry(obj) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const toScreen = v => {
+        const p = v.clone().project(camera);
+        return { x: ((p.x + 1) / 2) * rect.width, y: ((1 - p.y) / 2) * rect.height };
+    };
+    obj.updateMatrixWorld();
+
+    if (obj.isSprite) {  // text: use its bounding rectangle
+        const hw = obj.scale.x / 2, hh = obj.scale.y / 2;
+        const pts = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([dx, dy]) =>
+            toScreen(new THREE.Vector3(obj.position.x + dx, obj.position.y + dy, 0)));
+        return { pts, filled: true };
+    }
+
+    const pos = obj.geometry.attributes.position;
+    const pts = [];
+    for (let i = 0; i < pos.count; i++) {
+        const v = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(obj.matrixWorld);
+        pts.push(toScreen(v));
+    }
+    return { pts, filled: false };
+}
+
+function pointInRect(p, r) {
+    return p.x >= r.minX && p.x <= r.maxX && p.y >= r.minY && p.y <= r.maxY;
+}
+
+// WINDOW: every vertex must be inside the box
+function insideRect(g, r) {
+    return g.pts.length > 0 && g.pts.every(p => pointInRect(p, r));
+}
+
+// CROSSING: any vertex inside, or any segment passes through the box
+function crossesRect(g, r) {
+    if (g.filled) {  // text bounding box: simple overlap test
+        const xs = g.pts.map(p => p.x), ys = g.pts.map(p => p.y);
+        return !(Math.max(...xs) < r.minX || Math.min(...xs) > r.maxX ||
+                 Math.max(...ys) < r.minY || Math.min(...ys) > r.maxY);
+    }
+    if (g.pts.some(p => pointInRect(p, r))) return true;
+    for (let i = 0; i < g.pts.length - 1; i++) {
+        if (segIntersectsRect(g.pts[i], g.pts[i + 1], r)) return true;
+    }
+    return false;
+}
+
+// Liang–Barsky segment vs rectangle
+function segIntersectsRect(a, b, r) {
+    let t0 = 0, t1 = 1;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const p = [-dx, dx, -dy, dy];
+    const q = [a.x - r.minX, r.maxX - a.x, a.y - r.minY, r.maxY - a.y];
+    for (let i = 0; i < 4; i++) {
+        if (p[i] === 0) {
+            if (q[i] < 0) return false;
+        } else {
+            const t = q[i] / p[i];
+            if (p[i] < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+            else          { if (t < t0) return false; if (t < t1) t1 = t; }
+        }
+    }
+    return true;
+}
+
+// ==========================================

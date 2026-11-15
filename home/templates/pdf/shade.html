@@ -1,0 +1,337 @@
+
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css">
+
+<link rel="stylesheet" href="{% static 'css/pdf.css' %}">
+
+<div class="shading-workspace">
+
+    <div class="shading-panel">
+
+        <!-- HEADER -->
+        <div class="shading-header">
+            <h1>Remove Document Shading</h1>
+            <p>PDF &amp; Image Background Shade Removal Utility</p>
+        </div>
+
+        <!-- CONTENT -->
+        <div class="shading-body">
+
+            {% if error %}
+                <p class="shading-error">{{ error }}</p>
+            {% endif %}
+
+            <form method="post" enctype="multipart/form-data">
+
+                {% csrf_token %}
+
+                <!-- SHADE CAPTURE -->
+                <div class="form-group">
+
+                    <div class="shading-capture-box">
+
+                        <div class="shading-capture-title">
+                            Capture Shade Reference
+                        </div>
+
+                        <button
+                            type="button"
+                            id="captureBtn"
+                            class="shading-capture-btn"
+                        >
+                            Capture Shade
+                        </button>
+
+                        <p class="shading-help">
+                            Choose Window → Drag to select shade → Save
+                        </p>
+
+                    </div>
+
+                </div>
+
+                <input
+                    type="hidden"
+                    name="sample_image_base64"
+                    id="sample_image_base64"
+                >
+
+                <hr class="shading-divider">
+
+                <!-- SHADE RANGE -->
+                <div class="form-group">
+
+                    <label>
+                        Shade Range (Grayscale)
+                    </label>
+
+                    <div class="shading-range-grid">
+
+                        <!-- MINIMUM -->
+                        <div class="shading-column">
+
+                            <label for="shade_min">
+                                Minimum Value (0–255)
+                            </label>
+
+                            <input
+                                type="number"
+                                name="shade_min"
+                                id="shade_min"
+                                value="160"
+                                min="0"
+                                max="255"
+                            >
+
+                            <p class="shading-help">
+                                Lower grayscale threshold.
+                            </p>
+
+                        </div>
+
+                        <!-- MAXIMUM -->
+                        <div class="shading-column">
+
+                            <label for="shade_max">
+                                Maximum Value (0–255)
+                            </label>
+
+                            <input
+                                type="number"
+                                name="shade_max"
+                                id="shade_max"
+                                value="240"
+                                min="0"
+                                max="255"
+                            >
+
+                            <p class="shading-help">
+                                Upper grayscale threshold.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                    <div class="shading-range-info" style="margin-top:12px;">
+                        Removes background shades falling within the specified grayscale range.
+                    </div>
+
+                </div>
+
+                <hr class="shading-divider">
+
+                <!-- TARGET FILE -->
+                <div class="form-group">
+
+                    <label for="target_file">
+                        Select File to Clean
+                    </label>
+
+                    <input
+                        type="file"
+                        name="target_file"
+                        id="target_file"
+                        accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                        required
+                    >
+
+                    <p class="shading-help">
+                        Supported formats: PDF, JPG, JPEG and PNG.
+                    </p>
+
+                </div>
+
+                <!-- STATUS -->
+                <div class="form-group" style="margin-top:16px;">
+
+                    <label>Processing Information</label>
+
+                    <div class="shading-status">
+                        <p id="status">
+                            Ready to remove document shading.
+                        </p>
+                    </div>
+
+                </div>
+
+                <!-- ACTIONS -->
+                <div class="shading-actions">
+
+                    <span class="shading-help">
+                        Document Background Cleaning Utility
+                    </span>
+
+                    <div class="shading-button-group">
+
+                        <button
+                            type="submit"
+                            class="btn btn-merge"
+                            id="process-button"
+                        >
+                            Process &amp; Download
+                        </button>
+
+                        <a
+                            href="."
+                            class="btn btn-select"
+                        >
+                            Reset
+                        </a>
+
+                    </div>
+
+                </div>
+
+            </form>
+
+        </div>
+
+        <!-- FOOTER -->
+        <div class="shading-footer">
+            <span>DOCUMENT PROCESSING</span>
+            <span>Remove Shading Utility</span>
+        </div>
+
+    </div>
+
+</div>
+
+<!-- CROPPER JS -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
+
+<script>
+let cropper;
+let overlay;
+
+document.getElementById("captureBtn").onclick = async () => {
+
+    try {
+
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: { cursor: "always", frameRate: 1 },
+            audio: false
+        });
+
+        const video = document.createElement("video");
+        video.srcObject = stream;
+        await video.play();
+
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        canvas.getContext("2d").drawImage(video, 0, 0);
+
+        stream.getTracks().forEach(track => track.stop());
+
+        overlay = document.createElement("div");
+
+        overlay.style.position = "fixed";
+        overlay.style.inset = 0;
+        overlay.style.background = "rgba(0,0,0,0.85)";
+        overlay.style.display = "flex";
+        overlay.style.alignItems = "center";
+        overlay.style.justifyContent = "center";
+        overlay.style.zIndex = 9999;
+
+        const img = document.createElement("img");
+
+        img.src = canvas.toDataURL("image/png");
+        img.style.maxWidth = "95vw";
+        img.style.maxHeight = "95vh";
+        img.style.background = "#fff";
+
+        overlay.appendChild(img);
+        document.body.appendChild(overlay);
+
+        img.onload = () => {
+
+            cropper = new Cropper(img, {
+
+                viewMode: 1,
+                dragMode: "crop",
+                autoCropArea: 0.2,
+                movable: false,
+                zoomable: false,
+
+                cropend() {
+
+                    setTimeout(() => {
+
+                        if (confirm("Save this shade sample?")) {
+
+                            const cropped = cropper.getCroppedCanvas();
+
+                            const base64Data = cropped
+                                .toDataURL("image/png")
+                                .split(",")[1];
+
+                            document.getElementById(
+                                "sample_image_base64"
+                            ).value = base64Data;
+
+                            fetch("/pdf/save-shade/", {
+
+                                method: "POST",
+
+                                headers: {
+                                    "Content-Type":
+                                        "application/x-www-form-urlencoded"
+                                },
+
+                                body:
+                                    "sample_image_base64=" +
+                                    encodeURIComponent(base64Data)
+
+                            })
+
+                            .then(r => r.json())
+
+                            .then(d => {
+
+                                if (d.status === "ok") {
+                                    alert("Shade saved ✔");
+                                }
+
+                            })
+
+                            .catch(err => {
+                                console.error("Shade save failed:", err);
+                                alert("Unable to save shade sample.");
+                            });
+
+                        }
+
+                        cropper.destroy();
+                        document.body.removeChild(overlay);
+
+                    }, 50);
+
+                }
+
+            });
+
+        };
+
+    }
+
+    catch (err) {
+
+        console.error("Capture failed:", err);
+
+        if (err.name !== "NotAllowedError") {
+            alert("Unable to capture screen. Please try again.");
+        }
+
+    }
+
+};
+</script>
+
+{% endblock %}

@@ -1,0 +1,11 @@
+<!-- Three.js and the DXF parser must be loaded before these CAD scripts. -->
+<script src="{% static 'js/cad/cad-core.js' %}"></script>
+<script src="{% static 'js/cad/cad-input.js' %}"></script>
+<script src="{% static 'js/cad/cad-interaction.js' %}"></script>
+<script src="{% static 'js/cad/cad-snapping.js' %}"></script>
+<script src="{% static 'js/cad/cad-history-view.js' %}"></script>
+<script src="{% static 'js/cad/cad-command-line.js' %}"></script>
+<script src="{% static 'js/cad/cad-tools.js' %}"></script>
+<script src="{% static 'js/cad/cad-entities.js' %}"></script>
+<script src="{% static 'js/cad/cad-keyboard.js' %}"></script>
+<script src="{% static 'js/cad/cad-import.js' %}"></script>

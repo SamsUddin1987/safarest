@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+
+<link rel="stylesheet" href="{% static 'css/pdf.css' %}">
+
+<style>
+/* ===== SIMPLE INDUSTRIAL DESIGN ===== */
+
+</style>
+
+<div class="crop-workspace">
+
+    <div class="crop-panel">
+
+        <!-- HEADER -->
+        <div class="crop-header">
+            <h1>Crop / Clear PDF</h1>
+            <p>PDF Page Margin Processing</p>
+        </div>
+
+        <!-- CONTENT -->
+        <div class="crop-body">
+
+            <form
+                action="{% url 'pdf_crop' %}"
+                method="post"
+                enctype="multipart/form-data"
+                id="crop-pdf-form"
+            >
+
+                {% csrf_token %}
+
+                <div class="crop-grid">
+
+                    <!-- LEFT COLUMN -->
+                    <div class="crop-column">
+
+                        <div class="form-group">
+
+                            <label for="pdf_files">
+                                Select PDF File(s)
+                            </label>
+
+                            <input
+                                type="file"
+                                name="pdf_files"
+                                id="pdf_files"
+                                accept=".pdf,application/pdf"
+                                multiple
+                                required
+                            >
+
+                            <p class="crop-help">
+                                Multiple PDF files can be selected.
+                            </p>
+
+                        </div>
+
+                        <div class="form-group">
+
+                            <label>Selected PDF Files</label>
+
+                            <div class="crop-file-list">
+                                <ol id="selected-files"></ol>
+                            </div>
+
+                        </div>
+
+                        <div class="form-group">
+
+                            <label for="action_mode">
+                                Select Operation
+                            </label>
+
+                            <select
+                                name="action_mode"
+                                id="action_mode"
+                            >
+                                <option value="crop">
+                                    Crop (Resize page to margins)
+                                </option>
+
+                                <option value="clear">
+                                    Clear (Keep page size, blank out margins)
+                                </option>
+                            </select>
+
+                        </div>
+
+                    </div>
+
+                    <!-- RIGHT COLUMN -->
+                    <div class="crop-column">
+
+                        <div class="form-group">
+
+                            <label>Margin Settings (%)</label>
+
+                            <p class="crop-help" style="margin-bottom:9px;">
+                                Enter margins as a percentage of page width or height.
+                            </p>
+
+                            <div class="margin-grid">
+
+                                <div class="form-group">
+                                    <label for="margin_left">
+                                        Left (%)
+                                    </label>
+
+                                    <input
+                                        type="number"
+                                        name="margin_left"
+                                        id="margin_left"
+                                        value="0"
+                                        min="0"
+                                        step="0.1"
+                                    >
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="margin_right">
+                                        Right (%)
+                                    </label>
+
+                                    <input
+                                        type="number"
+                                        name="margin_right"
+                                        id="margin_right"
+                                        value="0"
+                                        min="0"
+                                        step="0.1"
+                                    >
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="margin_top">
+                                        Top (%)
+                                    </label>
+
+                                    <input
+                                        type="number"
+                                        name="margin_top"
+                                        id="margin_top"
+                                        value="0"
+                                        min="0"
+                                        step="0.1"
+                                    >
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="margin_bottom">
+                                        Bottom (%)
+                                    </label>
+
+                                    <input
+                                        type="number"
+                                        name="margin_bottom"
+                                        id="margin_bottom"
+                                        value="0"
+                                        min="0"
+                                        step="0.1"
+                                    >
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="form-group" style="margin-top:14px;">
+
+                            <label for="skip_pages">
+                                Pages to Skip (Optional)
+                            </label>
+
+                            <input
+                                type="text"
+                                name="skip_pages"
+                                id="skip_pages"
+                                placeholder="Example: 2, 5, 8-10"
+                                autocomplete="off"
+                                style="font-size:12px;"
+                            >
+
+                            <p class="crop-help">
+                                These pages will remain unchanged.
+                                Leave blank to process all pages.
+                            </p>
+                    </div>
+
+                </div>
+
+                <!-- STATUS -->
+                <div class="form-group" style="margin-top:16px;">
+
+                    <label>Processing Status</label>
+
+                    <div class="crop-status">
+                        <p id="status">Ready for processing.</p>
+                    </div>
+
+                </div>
+
+                <!-- ACTIONS -->
+                <div class="crop-actions">
+
+                    <span class="crop-help">
+                        Individual PDF downloads | Multiple file support
+                    </span>
+
+                    <div class="crop-button-group">
+
+                        <button
+                            type="submit"
+                            class="btn btn-merge"
+                            id="process-button"
+                        >
+                            Process &amp; Download
+                        </button>
+
+                        <a
+                            href="{% url 'pdf_crop' %}"
+                            class="btn btn-select"
+                        >
+                            Reset
+                        </a>
+
+                    </div>
+
+                </div>
+
+            </form>
+
+        </div>
+
+        <!-- FOOTER -->
+        <div class="crop-footer">
+            <span>PDF DOCUMENT PROCESSING</span>
+            <span>Crop / Clear Utility</span>
+        </div>
+
+    </div>
+
+</div>
+
+<script>
+(function () {
+
+    const fileInput = document.getElementById("pdf_files");
+    const fileList = document.getElementById("selected-files");
+    const form = document.getElementById("crop-pdf-form");
+    const processButton = document.getElementById("process-button");
+    const status = document.getElementById("status");
+
+    // Display selected PDF filenames
+    fileInput.addEventListener("change", function () {
+
+        fileList.replaceChildren();
+
+        Array.from(fileInput.files).forEach(function (file) {
+
+            const item = document.createElement("li");
+            item.textContent = file.name;
+            fileList.appendChild(item);
+
+        });
+
+    });
+
+    // Process and download PDFs individually
+    form.addEventListener("submit", async function (event) {
+
+        event.preventDefault();
+
+        const files = Array.from(fileInput.files);
+
+        if (!files.length) {
+            alert("Please select at least one PDF file.");
+            return;
+        }
+
+        const invalidFile = files.find(function (file) {
+            return !file.name.toLowerCase().endsWith(".pdf");
+        });
+
+        if (invalidFile) {
+            alert("Please select PDF files only.");
+            return;
+        }
+
+        processButton.disabled = true;
+        processButton.textContent = "Processing PDFs...";
+
+        try {
+
+            for (let i = 0; i < files.length; i++) {
+
+                const file = files[i];
+
+                status.textContent =
+                    "Processing " + (i + 1) + " of " +
+                    files.length + ": " + file.name;
+
+                // Collect all form values, including CSRF token.
+                const formData = new FormData(form);
+
+                // Send only one file per request to Django.
+                formData.delete("pdf_files");
+                formData.append("pdf_file", file);
+
+                const response = await fetch(form.action, {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const errorMessage = await response.text();
+                    throw new Error(
+                        "Error processing " + file.name + ":\n" +
+                        errorMessage
+                    );
+                }
+
+                const blob = await response.blob();
+
+                if (blob.type !== "application/pdf") {
+                    throw new Error(
+                        "Invalid PDF response received for " + file.name
+                    );
+                }
+
+                // Generate individual download filename.
+                const baseName = file.name.replace(/\.pdf$/i, "");
+                const action = document.getElementById("action_mode").value;
+
+                const outputName = action === "clear"
+                    ? baseName + "_cleared.pdf"
+                    : baseName + "_cropped.pdf";
+
+                // Download the processed PDF.
+                const downloadUrl = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+
+                link.href = downloadUrl;
+                link.download = outputName;
+
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+
+                setTimeout(function () {
+                    URL.revokeObjectURL(downloadUrl);
+                }, 3000);
+
+                // Allow a short gap between individual downloads.
+                await new Promise(resolve => setTimeout(resolve, 800));
+
+            }
+
+            status.textContent =
+                "Successfully processed " + files.length +
+                " PDF file(s). Check your Downloads folder.";
+
+        } catch (error) {
+
+            status.textContent = "Processing failed.";
+            alert(error.message);
+
+        } finally {
+
+            processButton.disabled = false;
+            processButton.textContent = "Process & Download";
+
+        }
+
+    });
+
+})();
+</script>
+
+{% endblock %}

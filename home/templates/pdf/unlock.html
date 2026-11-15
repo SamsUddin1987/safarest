@@ -1,0 +1,143 @@
+
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<link rel="stylesheet" href="{% static 'css/pdf.css' %}">
+
+<div class="unlock-workspace">
+
+    <div class="unlock-panel">
+
+        <!-- HEADER -->
+        <div class="unlock-header">
+            <h1>Unlock PDF</h1>
+            <p>PDF Document Password Removal</p>
+        </div>
+
+        <!-- CONTENT -->
+        <div class="unlock-body">
+
+            {% if error %}
+                <p class="unlock-error">{{ error }}</p>
+            {% endif %}
+
+            <form
+                action="{% url 'pdf_unlock' %}"
+                method="post"
+                enctype="multipart/form-data"
+            >
+
+                {% csrf_token %}
+
+                <div class="unlock-grid">
+
+                    <!-- LEFT COLUMN -->
+                    <div class="unlock-column">
+
+                        <div class="form-group">
+
+                            <label for="pdfs">
+                                Select Password-Protected PDF
+                            </label>
+
+                            <input
+                                type="file"
+                                name="pdfs"
+                                id="pdfs"
+                                accept=".pdf,application/pdf"
+                                required
+                            >
+
+                            <p class="unlock-help">
+                                Select the password-protected PDF file you want to unlock.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                    <!-- RIGHT COLUMN -->
+                    <div class="unlock-column">
+
+                        <div class="form-group">
+
+                            <label for="password">
+                                Enter Existing PDF Password
+                            </label>
+
+                            <input
+                                type="password"
+                                name="password"
+                                id="password"
+                                placeholder="Enter PDF password"
+                                autocomplete="current-password"
+                                required
+                            >
+
+                            <p class="unlock-help">
+                                Enter the correct password to remove PDF encryption.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <!-- STATUS -->
+                <div class="form-group" style="margin-top:16px;">
+
+                    <label>Processing Information</label>
+
+                    <div class="unlock-status">
+                        <p id="status">
+                            Ready to unlock your PDF.
+                        </p>
+                    </div>
+
+                </div>
+
+                <!-- ACTIONS -->
+                <div class="unlock-actions">
+
+                    <span class="unlock-help">
+                        PDF Password Removal Utility
+                    </span>
+
+                    <div class="unlock-button-group">
+
+                        <button
+                            type="submit"
+                            class="btn btn-merge"
+                            id="unlock-button"
+                        >
+                            Remove Password &amp; Download
+                        </button>
+
+                        <a
+                            href="{% url 'pdf_unlock' %}"
+                            class="btn btn-select"
+                        >
+                            Reset
+                        </a>
+
+                    </div>
+
+                </div>
+
+            </form>
+
+        </div>
+
+        <!-- FOOTER -->
+        <div class="unlock-footer">
+            <span>PDF DOCUMENT PROCESSING</span>
+            <span>Unlock PDF Utility</span>
+        </div>
+
+    </div>
+
+</div>
+
+{% endblock %}

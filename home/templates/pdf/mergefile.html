@@ -1,0 +1,213 @@
+
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<link rel="stylesheet" href="{% static 'css/pdf.css' %}">
+
+<div class="merge-workspace">
+
+    <div class="merge-panel">
+
+        <!-- HEADER -->
+        <div class="merge-header">
+            <h1>Merge PDF Files</h1>
+            <p>PDF Document Merging Utility</p>
+        </div>
+
+        <!-- CONTENT -->
+        <div class="merge-body">
+
+            {% if error %}
+                <p style="color: #c62828; font-size: 12px; margin: 0 0 14px;">
+                    {{ error }}
+                </p>
+            {% endif %}
+
+            <form
+                action="{% url 'pdf_mergefile' %}"
+                method="post"
+                enctype="multipart/form-data"
+                id="merge-pdf-form"
+            >
+
+                {% csrf_token %}
+
+                <div class="merge-grid">
+
+                    <!-- LEFT COLUMN -->
+                    <div class="merge-column">
+
+                        <div class="form-group">
+
+                            <label for="pdf_files">
+                                Select PDF Files
+                            </label>
+
+                            <input
+                                type="file"
+                                name="pdf_files"
+                                id="pdf_files"
+                                accept=".pdf,application/pdf"
+                                multiple
+                                required
+                            >
+
+                            <p class="merge-help">
+                                Multiple PDF files can be selected.
+                            </p>
+
+                        </div>
+
+                        <div class="form-group">
+
+                            <label>Merge Sequence</label>
+
+                            <div class="merge-status">
+                                <p>
+                                    All pages will be merged in the order
+                                    in which the files are selected.
+                                </p>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                    <!-- RIGHT COLUMN -->
+                    <div class="merge-column">
+
+                        <div class="form-group">
+
+                            <label for="selected-files">
+                                Selected PDF Files
+                            </label>
+
+                            <div class="merge-file-list">
+                                <ol id="selected-files"></ol>
+                            </div>
+
+                            <p class="merge-help">
+                                Check the selected file list before merging.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <!-- STATUS -->
+                <div class="form-group" style="margin-top:16px;">
+
+                    <label>Processing Status</label>
+
+                    <div class="merge-status">
+                        <p id="status">
+                            Ready for processing.
+                        </p>
+                    </div>
+
+                </div>
+
+                <!-- ACTIONS -->
+                <div class="merge-actions">
+
+                    <span class="merge-help">
+                        Single PDF output | Multiple file support
+                    </span>
+
+                    <div class="merge-button-group">
+
+                        <button
+                            type="submit"
+                            class="btn btn-merge"
+                            id="merge-button"
+                        >
+                            Merge PDFs &amp; Download
+                        </button>
+
+                        <a
+                            href="{% url 'pdf_mergefile' %}"
+                            class="btn btn-select"
+                        >
+                            Reset
+                        </a>
+
+                    </div>
+
+                </div>
+
+            </form>
+
+        </div>
+
+        <!-- FOOTER -->
+        <div class="merge-footer">
+            <span>PDF DOCUMENT PROCESSING</span>
+            <span>Merge PDF Utility</span>
+        </div>
+
+    </div>
+
+</div>
+
+<script>
+(function () {
+
+    const fileInput = document.getElementById("pdf_files");
+    const fileList = document.getElementById("selected-files");
+    const form = document.getElementById("merge-pdf-form");
+    const mergeButton = document.getElementById("merge-button");
+    const status = document.getElementById("status");
+
+    // Display selected PDF files
+    fileInput.addEventListener("change", function () {
+
+        fileList.replaceChildren();
+
+        Array.from(fileInput.files).forEach(function (file) {
+
+            const item = document.createElement("li");
+            item.textContent = file.name;
+            fileList.appendChild(item);
+
+        });
+
+        status.textContent = fileInput.files.length
+            ? fileInput.files.length + " PDF file(s) selected."
+            : "Ready for processing.";
+
+    });
+
+    // Validate files before submission
+    form.addEventListener("submit", function (event) {
+
+        const files = Array.from(fileInput.files);
+
+        if (!files.length) {
+            event.preventDefault();
+            alert("Please select at least one PDF file.");
+            return;
+        }
+
+        const invalidFile = files.find(function (file) {
+            return !file.name.toLowerCase().endsWith(".pdf");
+        });
+
+        if (invalidFile) {
+            event.preventDefault();
+            alert("Please select PDF files only.");
+            return;
+        }
+
+        mergeButton.disabled = true;
+        mergeButton.textContent = "Merging PDFs...";
+        status.textContent = "Merging " + files.length + " PDF file(s)...";
+
+    });
+
+})();
+</script>
+
+{% endblock %}
