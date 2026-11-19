@@ -26,7 +26,7 @@ ODA_CONVERTER_PATH = os.environ.get(
 
 SECRET_KEY = os.environ.get(
     "SECRET_KEY",
-    "local-development-secret-key-change-before-production"
+    "p$jkd_)tit@-=1o1*u+wb=y5a-nxj2m@52e5pk^uy_flp1)x54"
 )
 
 DEBUG = os.environ.get("DEBUG", "True").lower() == "true"
