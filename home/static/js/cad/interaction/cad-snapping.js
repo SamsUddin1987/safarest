@@ -53,21 +53,65 @@ function circleCircleIntersect(c1, c2) {
 
 // Break an entity into snap-able pieces (all in world coordinates)
 function getSnapData(obj) {
-    const d = { segs: [], endpoints: [], mids: [], nodes: [], circle: null };
+
+    const d = {
+        segs: [],
+        endpoints: [],
+        mids: [],
+        nodes: [],
+        circle: null
+    };
+
     const ud = obj.userData || {};
 
-    if (obj.isSprite) {                       // TEXT: insertion point = NODE
-        d.nodes.push({ x: obj.position.x, y: obj.position.y });
-        return d;
-    }
-    if (ud.type === 'circle') {
-        d.circle = { cx: ud.center.x, cy: ud.center.y, r: ud.radius };
+    // Ensure the object's world transformation is current
+    obj.updateWorldMatrix(true, false);
+
+    // TEXT: insertion point
+    if (obj.isSprite) {
+
+        const p = new THREE.Vector3();
+        obj.getWorldPosition(p);
+
+        d.nodes.push({
+            x: p.x,
+            y: p.y
+        });
+
         return d;
     }
 
-    const pos = obj.geometry.attributes.position;   // line / polyline / rectangle
+    // CIRCLE
+    if (ud.type === 'circle') {
+
+        d.circle = {
+            cx: ud.center.x,
+            cy: ud.center.y,
+            r: ud.radius
+        };
+
+        return d;
+    }
+
+    // LINE / POLYLINE / RECTANGLE
+    const pos = obj.geometry?.attributes?.position;
+
+    if (!pos) return d;
+
     const pts = [];
-    for (let i = 0; i < pos.count; i++) pts.push({ x: pos.getX(i), y: pos.getY(i) });
+    const v = new THREE.Vector3();
+
+    for (let i = 0; i < pos.count; i++) {
+
+        v.fromBufferAttribute(pos, i)
+         .applyMatrix4(obj.matrixWorld);
+
+        pts.push({
+            x: v.x,
+            y: v.y
+        });
+    }
+
     return snapDataFromPoints(pts);
 }
 
@@ -160,14 +204,26 @@ function computeOsnap(items, cur, base, ap, modes) {
 }
 
 function worldPerPixel() {
-    return (camera.right - camera.left) / camera.zoom / renderer.domElement.clientWidth;
+    const rect = renderer.domElement.getBoundingClientRect();
+
+    if (!rect.width) return 0;
+
+    return (camera.right - camera.left) /
+           camera.zoom /
+           rect.width;
 }
 
 function worldToScreen(x, y) {
     camera.updateMatrixWorld(true);
+
+    const rect = renderer.domElement.getBoundingClientRect();
+
     const v = new THREE.Vector3(x, y, 0).project(camera);
-    return { x: ((v.x + 1) / 2) * renderer.domElement.clientWidth,
-             y: ((1 - v.y) / 2) * renderer.domElement.clientHeight };
+
+    return {
+        x: ((v.x + 1) / 2) * rect.width,
+        y: ((1 - v.y) / 2) * rect.height
+    };
 }
 
 // The point a drawing command should use: OSNAP > (GRID SNAP, ORTHO) > raw cursor

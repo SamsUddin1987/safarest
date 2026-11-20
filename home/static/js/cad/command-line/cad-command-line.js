@@ -7,12 +7,6 @@ const RE_POLAR = /^([-+]?(?:\d+\.?\d*|\.\d+))<([-+]?(?:\d+\.?\d*|\.\d+))$/;
 // run = implemented here. No run = real AutoCAD command that is recognised but not built yet.
 const planned = (name, aliases, desc) => ({ name, aliases, desc, run: null });
 const CAD_COMMANDS = [
-    { name: 'LINE', aliases: ['L'], desc: 'Draw straight line segments', run: () => setTool('line') },
-    { name: 'PLINE', aliases: ['PL'], desc: 'Draw a 2D polyline', run: () => setTool('polyline') },
-    { name: 'RECTANG', aliases: ['REC', 'RECTANGLE'], desc: 'Draw a rectangle', run: () => setTool('rect') },
-    { name: 'CIRCLE', aliases: ['C'], desc: 'Draw a circle (centre, radius)', run: () => setTool('circle') },
-    { name: 'TEXT', aliases: ['DT', 'DTEXT'], desc: 'Place single-line text', run: () => setTool('text') },
-    { name: 'MTEXT', aliases: ['T', 'MT'], desc: 'Text (placed as single-line text here)', run: () => setTool('text') },
     { name: 'ERASE', aliases: ['E'], desc: 'Delete objects', run: () => cmdErase() },
     { name: 'SELECT', aliases: [], desc: 'Select objects (type ALL to select everything)', run: () => cmdSelect() },
     { name: 'UNDO', aliases: ['U'], desc: 'Undo the last action', run: () => undo() },
@@ -76,11 +70,60 @@ const CAD_COMMANDS = [
     planned('OPEN', [], 'Open a drawing'),
     planned('PLOT', ['PRINT'], 'Plot / print')
 ];
-const CMD_LOOKUP = {}, CMD_BY_NAME = {};
-CAD_COMMANDS.forEach(c => {
-    CMD_BY_NAME[c.name] = c;
-    CMD_LOOKUP[c.name] = c;
-    c.aliases.forEach(a => { CMD_LOOKUP[a] = c; });
+
+// Register existing commands in the central CAD registry.
+
+const CAD_COMMAND_CATEGORIES = {
+
+    PLINE: 'draw',
+    RECTANG: 'draw',
+    CIRCLE: 'draw',
+    TEXT: 'draw',
+    MTEXT: 'draw',
+    ARC: 'draw',
+    ELLIPSE: 'draw',
+
+    ERASE: 'modify',
+    MOVE: 'modify',
+    COPY: 'modify',
+    ROTATE: 'modify',
+    SCALE: 'modify',
+    MIRROR: 'modify',
+    TRIM: 'modify',
+    EXTEND: 'modify',
+
+    ZOOM: 'view',
+    PAN: 'view',
+    GRID: 'view',
+    ORTHO: 'view',
+    SNAP: 'view',
+    OSNAP: 'view',
+
+    DIST: 'measure',
+    ID: 'measure',
+    AREA: 'measure'
+};
+
+CAD_COMMANDS.forEach((legacyCommand, index) => {
+
+    const registeredCommand = CAD.registerCommand({
+
+        name: legacyCommand.name,
+
+        aliases: legacyCommand.aliases,
+
+        desc: legacyCommand.desc,
+
+        category:
+            CAD_COMMAND_CATEGORIES[legacyCommand.name] || 'general',
+
+        execute: legacyCommand.run
+
+    });
+
+    // Preserve compatibility with existing command-line code.
+    CAD_COMMANDS[index] = registeredCommand;
+
 });
 
 // --- messages / history ---
@@ -160,7 +203,7 @@ function updateSuggestions() {
     suggestions = [];
     suggestIdx = -1;
     if (v && !/^[-+@#.\d]/.test(v)) {
-        suggestions = CAD_COMMANDS
+        suggestions = CAD.getCommands()
             .filter(c => c.name.startsWith(v) || c.aliases.some(a => a.startsWith(v)))
             .sort((a, b) => {
                 const ea = (a.name === v || a.aliases.includes(v)) ? 0 : 1;
@@ -273,8 +316,11 @@ function processCommandText(raw) {
     }
 
     // 4. a command name or alias
-    const cmd = CMD_LOOKUP[up];
-    if (cmd) { runCommand(cmd); return; }
+    const cmd = CAD.getCommand(up);
+    if (cmd) {
+        runCommand(cmd);
+        return;
+    }
 
     logHistory(`Unknown command "${text}". Type HELP or ? for the command list.`);
     setCommandPrompt(`Unknown command "${text}".`);
@@ -283,58 +329,56 @@ function processCommandText(raw) {
 function runCommand(cmd) {
     // typing a new command ends the one in progress (a polyline in progress is kept)
     if (currentTool !== 'select') {
-        if (currentTool === 'polyline' && currentPoints.length > 1) commitPolyline(currentPoints);
+
+        const activeTool = CAD.getTool(currentTool);
+
+        if (
+            activeTool &&
+            typeof activeTool.onFinish === 'function'
+        ) {
+
+            activeTool.onFinish(CAD.createContext());
+
+        }
+
         finishTool();
     }
     pendingCommand = null;
     lastCommandName = cmd.name;
     logHistory(`Command: ${cmd.name}`);
-    if (!cmd.run) {
-        const msg = `${cmd.name} (${cmd.desc}) is a real AutoCAD command, but it is not available in this viewer yet.`;
+    if (!cmd.execute) {
+
+        const msg =
+            `${cmd.name} (${cmd.desc}) is a real AutoCAD command, but it is not available in this viewer yet.`;
+
         logHistory(msg);
         setCommandPrompt(`${cmd.name}: not available yet.`);
+
         return;
     }
-    cmd.run();
-}
+
+    // Execute through the central registry.
+    CAD.executeCommand(cmd.name);
+    }
 
 function handleToolOption(up) {
-    const isClose = (up === 'C' || up === 'CLOSE');
-    const isUndo = (up === 'U' || up === 'UNDO');
 
-    if (currentTool === 'polyline' && isDrawing) {
-        if (isClose) {
-            if (currentPoints.length > 2) {
-                currentPoints.push(currentPoints[0].clone());
-                commitPolyline(currentPoints);
-                setTool(currentTool);
-            } else logHistory('PLINE — need at least 3 points to close.');
-            return true;
-        }
-        if (isUndo) {
-            currentPoints.pop();
-            if (currentPoints.length === 0) setTool('polyline');
-            else {
-                basePoint = currentPoints[currentPoints.length - 1].clone();
-                clearActiveBuffer();
-                setCommandPrompt('PLINE — Last vertex removed. Next point:');
-            }
-            return true;
-        }
+    if (!isDrawing) return false;
+
+    const activeTool = CAD.getTool(currentTool);
+
+    if (
+        activeTool &&
+        typeof activeTool.onOption === 'function'
+    ) {
+
+        return activeTool.onOption(
+            up,
+            CAD.createContext()
+        );
+
     }
-    if (currentTool === 'line' && isDrawing) {
-        if (isClose) {
-            if (lineChainStart && lineSegCount > 1) commitLine(basePoint, lineChainStart);
-            else logHistory('LINE — need at least 2 segments to close.');
-            setTool('line');
-            return true;
-        }
-        if (isUndo) {
-            if (lineSegCount > 0) { lineSegCount--; undo(); }
-            else setTool('line');   // only the first point was placed: just drop it
-            return true;
-        }
-    }
+
     return false;
 }
 
@@ -350,17 +394,47 @@ function commandEnter() {
         return;
     }
     if (currentTool !== 'select') {
-        if (currentTool === 'polyline' && currentPoints.length > 1) { commitPolyline(currentPoints); setTool(currentTool); }
-        else if (isDrawing) setTool(currentTool);      // abandon the unfinished object, stay in the command
-        else finishTool();                             // nothing started: Enter ends the command
+
+        const activeTool = CAD.getTool(currentTool);
+
+        if (
+            activeTool &&
+            typeof activeTool.onEnter === 'function'
+        ) {
+
+            activeTool.onEnter(CAD.createContext());
+
+            return;
+        }
+
+        if (isDrawing) {
+            setTool(currentTool);
+        } else {
+            finishTool();
+        }
+
         return;
     }
-    if (lastCommandName && CMD_BY_NAME[lastCommandName]) runCommand(CMD_BY_NAME[lastCommandName]);   // repeat last
+    const lastCommand = lastCommandName
+        ? CAD.getCommand(lastCommandName)
+        : null;
+
+    if (lastCommand) {
+        runCommand(lastCommand);
+    }
 }
 
 function cancelCommand() {
     const wasActive = currentTool !== 'select' || isDrawing || !!pendingCommand;
-    if (currentTool === 'polyline' && currentPoints.length > 1) commitPolyline(currentPoints);   // keep what was drawn
+    const activeTool = CAD.getTool(currentTool);
+    if (
+        activeTool &&
+        typeof activeTool.onFinish === 'function'
+    ) {
+
+        activeTool.onFinish(CAD.createContext());
+
+    }
     pendingCommand = null;
     cancelBoxSelect();
     clearSelection();
@@ -504,7 +578,13 @@ function reportDistance(a, b) {
 
 function cmdHelp() {
     cmdOverlayMax = 14;
-    const notReady = CAD_COMMANDS.filter(c => !c.run).map(c => c.aliases.length ? `${c.name} (${c.aliases[0]})` : c.name);
+    const notReady = CAD.getCommands()
+        .filter(c => !c.execute)
+        .map(c =>
+            c.aliases.length
+                ? `${c.name} (${c.aliases[0]})`
+                : c.name
+        );
     [
         'DRAW:    LINE (L)  PLINE (PL)  RECTANG (REC)  CIRCLE (C)  TEXT (DT)  MTEXT (T)',
         'MODIFY:  ERASE (E)  UNDO (U)  REDO  SELECT   —  or select objects and press Delete',

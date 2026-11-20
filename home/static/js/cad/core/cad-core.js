@@ -190,4 +190,226 @@ function animate() {
     renderer.render(scene, camera);
 }
 
+
+/**
+ * SAFAR EDGE CAD
+ * Command Context Provider
+ *
+ * Provides a controlled interface between
+ * the CAD engine and independent commands.
+ */
+
+
+function createCADCommandContext() {
+
+    return Object.freeze({
+
+        // ---------------------------------
+        // CAD STATE
+        // ---------------------------------
+
+        getState() {
+
+            return Object.freeze({
+
+                currentTool: currentTool,
+                isDrawing: isDrawing,
+
+                basePoint: basePoint ? basePoint.clone() : null,
+
+                currentPoints: currentPoints.map(
+                    point => point.clone()
+                ),
+
+                lineChainStart: lineChainStart
+                    ? lineChainStart.clone()
+                    : null,
+
+                lineSegCount: lineSegCount,
+                toolStep: toolStep,
+
+                units: sysUnits,
+                precision: sysPrecision,
+
+                drawnObjects: [...drawnObjects],
+                selectedObjects: [...selectedObjects]
+
+            });
+
+        },
+
+
+        // ---------------------------------
+        // CONTROLLED STATE UPDATE
+        // ---------------------------------
+
+        updateState(patch) {
+
+            if (!patch || typeof patch !== 'object') return;
+
+            if ('isDrawing' in patch) {
+                isDrawing = Boolean(patch.isDrawing);
+            }
+
+            if ('basePoint' in patch) {
+                basePoint = patch.basePoint
+                    ? patch.basePoint.clone()
+                    : null;
+            }
+
+            if ('currentPoints' in patch) {
+                currentPoints = Array.isArray(patch.currentPoints)
+                    ? patch.currentPoints.map(point => point.clone())
+                    : [];
+            }
+
+            if ('lineChainStart' in patch) {
+                lineChainStart = patch.lineChainStart
+                    ? patch.lineChainStart.clone()
+                    : null;
+            }
+
+            if ('lineSegCount' in patch) {
+                lineSegCount = Math.max(
+                    0,
+                    Number(patch.lineSegCount) || 0
+                );
+            }
+
+            if ('toolStep' in patch) {
+                toolStep = Number(patch.toolStep) || 0;
+            }
+
+        },
+
+
+        // ---------------------------------
+        // THREE.JS ENGINE
+        // ---------------------------------
+
+        getScene() {
+            return scene;
+        },
+
+        getCamera() {
+            return camera;
+        },
+
+        getRenderer() {
+            return renderer;
+        },
+
+
+        // ---------------------------------
+        // TOOL OPERATIONS
+        // ---------------------------------
+
+        setTool(toolName, copySources) {
+            return setTool(toolName, copySources);
+        },
+
+        finishCurrentTool() {
+            return finishTool();
+        },
+
+
+        // ---------------------------------
+        // ENTITY OPERATIONS
+        // ---------------------------------
+
+        addEntity(object, record) {
+            return addEntity(object, record);
+        },
+
+        removeEntity(object) {
+            return removeEntity(object);
+        },
+
+
+        // ---------------------------------
+        // PREVIEW OPERATIONS
+        // ---------------------------------
+
+        setPreview(object) {
+
+            clearActiveBuffer();
+
+            activeBufferObj = object;
+
+            if (scene && object) {
+                scene.add(object);
+            }
+
+            return object;
+
+        },
+
+        clearPreview() {
+            return clearActiveBuffer();
+        },
+
+
+        // ---------------------------------
+        // HISTORY
+        // ---------------------------------
+
+        undo() {
+            return undo();
+        },
+
+        redo() {
+            return redo();
+        },
+
+
+        // ---------------------------------
+        // VIEW
+        // ---------------------------------
+
+        zoomExtents() {
+            return zoomExtents();
+        },
+
+
+        // ---------------------------------
+        // SELECTION
+        // ---------------------------------
+
+        deleteSelectedObjects() {
+            return deleteSelectedObjects();
+        },
+
+
+        // ---------------------------------
+        // USER INTERFACE
+        // ---------------------------------
+
+        setPrompt(message) {
+            return setCommandPrompt(message);
+        },
+
+        writeHistory(message) {
+            return logHistory(message);
+        },
+
+        notify(message) {
+            return notify(message);
+        },
+
+        formatValue(value) {
+            return formatVal(value);
+        }
+
+    });
+
+}
+
+// Connect context provider with the registry
+if (
+    window.CAD &&
+    typeof window.CAD.setContextProvider === 'function'
+) {
+    window.CAD.setContextProvider(createCADCommandContext);
+}
+
 // ==========================================

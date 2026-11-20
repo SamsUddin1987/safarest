@@ -1,12 +1,5 @@
 // 7. DRAWING ENTITIES & PREVIEW
 // ==========================================
-function commitLine(p1, p2) {
-    const geom = new THREE.BufferGeometry().setFromPoints([p1, p2]);
-    const mat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
-    const line = new THREE.Line(geom, mat);
-    line.userData = { type: 'line', originalColor: 0xffffff };
-    addEntity(line);
-}
 
 function commitPolyline(pts) {
     const geom = new THREE.BufferGeometry().setFromPoints(pts);
@@ -69,42 +62,106 @@ function createTextEntity(pt, textStr) {
 }
 
 function updateActiveBufferPreview(pt) {
-    clearActiveBuffer();
-    const mat = new THREE.LineBasicMaterial({ color: 0x00ffff, linewidth: 1.5 });
 
-    if (currentTool === 'line' || currentTool === 'dist') {
-        const geom = new THREE.BufferGeometry().setFromPoints([basePoint, pt]);
-        activeBufferObj = new THREE.Line(geom, mat);
-        setCommandPrompt(`${currentTool === 'dist' ? 'DIST' : 'LINE'} — Dist: ${formatVal(basePoint.distanceTo(pt))}`);
-    } else if (currentTool === 'polyline') {
-        const pts = [...currentPoints, pt];
-        const geom = new THREE.BufferGeometry().setFromPoints(pts);
-        activeBufferObj = new THREE.Line(geom, mat);
-    } else if (currentTool === 'rect' || currentTool === 'zoomw') {
-        const geom = new THREE.BufferGeometry().setFromPoints(rectPoints(basePoint, pt));
-        activeBufferObj = new THREE.Line(geom, mat);
-        setCommandPrompt(`${currentTool === 'zoomw' ? 'ZOOM' : 'RECTANG'} — W: ${formatVal(Math.abs(pt.x - basePoint.x))}  H: ${formatVal(Math.abs(pt.y - basePoint.y))}`);
-    } else if (currentTool === 'circle') {
-        const rad = basePoint.distanceTo(pt);
-        const pts = [];
-        for (let i = 0; i <= 64; i++) {
-            const theta = (i / 64) * Math.PI * 2;
-            pts.push(new THREE.Vector3(basePoint.x + Math.cos(theta) * rad, basePoint.y + Math.sin(theta) * rad, 0));
-        }
-        const geom = new THREE.BufferGeometry().setFromPoints(pts);
-        activeBufferObj = new THREE.Line(geom, mat);
-        setCommandPrompt(`CIRCLE — Radius: ${formatVal(rad)}`);
+    // =====================================
+    // INDEPENDENT DRAW COMMAND PREVIEWS
+    // =====================================
+
+    const activeDrawTool = CAD.getTool(currentTool);
+
+    if (
+        activeDrawTool &&
+        typeof activeDrawTool.onPreview === 'function'
+    ) {
+
+        activeDrawTool.onPreview(
+            pt,
+            CAD.createContext()
+        );
+
+        return;
     }
 
-    if (activeBufferObj) scene.add(activeBufferObj);
+    // Remove old preview before creating another.
+    clearActiveBuffer();
+
+    const mat = new THREE.LineBasicMaterial({
+        color: 0x00ffff,
+        linewidth: 1.5
+    });
+
+
+    // =====================================
+    // DISTANCE PREVIEW
+    // =====================================
+
+    if (currentTool === 'dist') {
+
+        const geom =
+            new THREE.BufferGeometry().setFromPoints([
+                basePoint,
+                pt
+            ]);
+
+        activeBufferObj = new THREE.Line(geom, mat);
+
+        setCommandPrompt(
+            `DIST — Dist: ${formatVal(basePoint.distanceTo(pt))}`
+        );
+    }
+
+
+    // =====================================
+    // ZOOM WINDOW PREVIEW
+    // =====================================
+
+    else if (currentTool === 'zoomw') {
+
+        const geom =
+            new THREE.BufferGeometry().setFromPoints(
+                rectPoints(basePoint, pt)
+            );
+
+        activeBufferObj = new THREE.Line(geom, mat);
+
+        setCommandPrompt(
+            `ZOOM — W: ${formatVal(Math.abs(pt.x - basePoint.x))} H: ${formatVal(Math.abs(pt.y - basePoint.y))}`
+        );
+    }
+
+
+    if (activeBufferObj) {
+        scene.add(activeBufferObj);
+    }
+
 }
 
 function clearActiveBuffer() {
-    if (activeBufferObj) {
-        scene.remove(activeBufferObj);
+
+    if (!activeBufferObj) return;
+
+    scene.remove(activeBufferObj);
+
+    if (activeBufferObj.geometry) {
         activeBufferObj.geometry.dispose();
-        activeBufferObj = null;
     }
+
+    if (activeBufferObj.material) {
+
+        if (Array.isArray(activeBufferObj.material)) {
+
+            activeBufferObj.material.forEach(material => {
+                if (material) material.dispose();
+            });
+
+        } else {
+
+            activeBufferObj.material.dispose();
+
+        }
+    }
+
+    activeBufferObj = null;
 }
 
 // ==========================================

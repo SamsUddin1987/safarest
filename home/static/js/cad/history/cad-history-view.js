@@ -25,10 +25,20 @@ function undo() {
     if (a.type === 'add') {
         a.objs.forEach(o => removeEntity(o));
 
-        const o = a.objs[0];
-        if (currentTool === 'line' && isDrawing && o.userData.type === 'line') {
-            const pos = o.geometry.attributes.position;
-            basePoint = new THREE.Vector3(pos.getX(0), pos.getY(0), 0);
+        const activeTool = window.CAD
+            ? window.CAD.getTool(currentTool)
+            : null;
+
+        if (
+            activeTool &&
+            typeof activeTool.afterUndo === 'function'
+        ) {
+
+            activeTool.afterUndo(
+                a,
+                window.CAD.createContext()
+            );
+
         }
 
     } else if (a.type === 'move') {

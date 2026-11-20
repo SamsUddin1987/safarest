@@ -635,14 +635,41 @@
 </div>
 {% endblock %}
 
-
 {% block extra_js %}
 
-<!-- DXF Parser Library -->
+<!-- DXF Parser -->
 <script src="https://cdn.jsdelivr.net/npm/dxf-parser@1.1.2/dist/dxf-parser.js"></script>
 
-<!-- CAD Viewer -->
-<script src="{% static 'js/cad-viewer.js' %}"></script>
+<!-- CORE -->
+<script src="{% static 'js/cad/core/cad-registry.js' %}"></script>
+<script src="{% static 'js/cad/core/cad-core.js' %}"></script>
+
+<!-- DRAW COMMANDS -->
+<!-- INDEPENDENT DRAW COMMANDS -->
+<script src="{% static 'js/cad/commands/draw/line.js' %}"></script>
+<script src="{% static 'js/cad/commands/draw/polyline.js' %}"></script>
+<script src="{% static 'js/cad/commands/draw/rectangle.js' %}"></script>
+<script src="{% static 'js/cad/commands/draw/circle.js' %}"></script>
+<script src="{% static 'js/cad/commands/draw/text.js' %}"></script>
+
+<!-- INTERACTION -->
+<script src="{% static 'js/cad/interaction/cad-input.js' %}"></script>
+<script src="{% static 'js/cad/interaction/cad-interaction.js' %}"></script>
+<script src="{% static 'js/cad/interaction/cad-snapping.js' %}"></script>
+
+<!-- HISTORY -->
+<script src="{% static 'js/cad/history/cad-history-view.js' %}"></script>
+
+<!-- COMMAND LINE -->
+<script src="{% static 'js/cad/command-line/cad-command-line.js' %}"></script>
+
+<!-- EXISTING TOOLS AND ENTITIES -->
+<script src="{% static 'js/cad/cad-tools.js' %}"></script>
+<script src="{% static 'js/cad/entities/cad-entities.js' %}"></script>
+
+<!-- KEYBOARD AND IMPORT -->
+<script src="{% static 'js/cad/interaction/cad-keyboard.js' %}"></script>
+<script src="{% static 'js/cad/io/cad-import.js' %}"></script>
 
 <script>
 document.addEventListener("DOMContentLoaded", function() {

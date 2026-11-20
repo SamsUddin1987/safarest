@@ -176,8 +176,33 @@ function onCanvasClick(event) {
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-    // Obtain the exact drawing coordinate, including OSNAP
+    // Obtain raw cursor position
+    const rawPt = getCursorWorldCoordinates().clone();
+
+    // Obtain final drawing coordinate, including OSNAP
     const pt = getDrawPoint();
+
+    if (window.CAD_DEBUG_SNAP) {
+
+        console.log('CAD SNAP CLICK:', {
+
+            tool: currentTool,
+
+            rawPoint: {
+                x: rawPt.x,
+                y: rawPt.y
+            },
+
+            selectedSnap: currentSnap,
+
+            finalPoint: {
+                x: pt.x,
+                y: pt.y
+            }
+
+        });
+
+    }
 
     // Multi-Selection Logic in Select Mode
     if (currentTool === 'select') {

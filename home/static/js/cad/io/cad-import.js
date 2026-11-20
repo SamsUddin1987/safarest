@@ -14,7 +14,6 @@ function cadSetFileStatus(message, error = false) {
     }
 }
 
-
 function cadAddLine(points, color = 0xe6e6e6, closed = false) {
 
     if (!points || points.length < 2) return;

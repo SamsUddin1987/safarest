@@ -380,6 +380,24 @@ function updateMovePreview(pt) {
 
 function handleToolClick(pt) {
     lastPoint = pt.clone();
+    // =========================================
+    // INDEPENDENT DRAW COMMAND DISPATCHER
+    // =========================================
+
+    const activeDrawTool = CAD.getTool(currentTool);
+
+    if (
+        activeDrawTool &&
+        typeof activeDrawTool.onClick === 'function'
+    ) {
+
+        activeDrawTool.onClick(
+            pt,
+            CAD.createContext()
+        );
+
+        return;
+    }
 
     // COPY command (CO / CP)
     if (currentTool === 'copy') {
@@ -473,13 +491,6 @@ function handleToolClick(pt) {
         return;
     }
 
-    if (currentTool === 'text') {
-        const inputStr = prompt("Enter CAD Text Value:", "SafarEdge CAD");
-        if (inputStr) createTextEntity(pt, inputStr);
-        setTool(currentTool);   // stay in the command until ESC
-        return;
-    }
-
     if (currentTool === 'id') {
         notify(`ID — X = ${pt.x.toFixed(sysPrecision)}  Y = ${pt.y.toFixed(sysPrecision)}`);
         finishTool();
@@ -491,26 +502,11 @@ function handleToolClick(pt) {
         currentPoints = [basePoint];
         isDrawing = true;
         toolStep = 1;
-        if (currentTool === 'line') { lineChainStart = pt.clone(); lineSegCount = 0; }
         if (currentTool === 'rect') setCommandPrompt('RECTANG — Pick opposite corner:');
         if (currentTool === 'dist') setCommandPrompt('DIST — Specify second point:');
         if (currentTool === 'zoomw') setCommandPrompt('ZOOM — Specify opposite corner:');
     } else {
-        if (currentTool === 'line') {
-            commitLine(basePoint, pt);
-            lineSegCount++;
-            basePoint = pt.clone();
-        } else if (currentTool === 'polyline') {
-            currentPoints.push(pt.clone());
-            basePoint = pt.clone();   // next segment starts from the last vertex
-            setCommandPrompt('PLINE — Next point (type C = Close, U = Undo, ENTER = finish):');
-        } else if (currentTool === 'rect') {
-            commitRectangle(basePoint, pt);
-            setTool(currentTool);   // stay in the command until ESC
-        } else if (currentTool === 'circle') {
-            commitCircle(basePoint, basePoint.distanceTo(pt));
-            setTool(currentTool);   // stay in the command until ESC
-        } else if (currentTool === 'dist') {
+        if (currentTool === 'dist') {
             reportDistance(basePoint, pt);
             finishTool();
         } else if (currentTool === 'zoomw') {
