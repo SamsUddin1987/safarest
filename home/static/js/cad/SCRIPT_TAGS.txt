@@ -1,11 +1,38 @@
 <!-- Three.js and the DXF parser must be loaded before these CAD scripts. -->
-<script src="{% static 'js/cad/cad-core.js' %}"></script>
-<script src="{% static 'js/cad/cad-input.js' %}"></script>
-<script src="{% static 'js/cad/cad-interaction.js' %}"></script>
-<script src="{% static 'js/cad/cad-snapping.js' %}"></script>
-<script src="{% static 'js/cad/cad-history-view.js' %}"></script>
-<script src="{% static 'js/cad/cad-command-line.js' %}"></script>
+
+<!-- CORE -->
+<script src="{% static 'js/cad/core/cad-registry.js' %}"></script>
+<script src="{% static 'js/cad/core/cad-core.js' %}"></script>
+
+<!-- DRAW COMMANDS -->
+<script src="{% static 'js/cad/commands/draw/line.js' %}"></script>
+<script src="{% static 'js/cad/commands/draw/polyline.js' %}"></script>
+<script src="{% static 'js/cad/commands/draw/rectangle.js' %}"></script>
+<script src="{% static 'js/cad/commands/draw/circle.js' %}"></script>
+<script src="{% static 'js/cad/commands/draw/text.js' %}"></script>
+
+<!-- MODIFY COMMANDS -->
+<script src="{% static 'js/cad/core/modify-utils.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/erase.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/move.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/copy.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/rotate.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/scale.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/mirror.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/trim.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/extend.js' %}"></script>
+
+<!-- INTERACTION -->
+<script src="{% static 'js/cad/interaction/cad-input.js' %}"></script>
+<script src="{% static 'js/cad/interaction/cad-interaction.js' %}"></script>
+<script src="{% static 'js/cad/interaction/cad-snapping.js' %}"></script>
+
+<!-- HISTORY AND COMMAND LINE -->
+<script src="{% static 'js/cad/history/cad-history-view.js' %}"></script>
+<script src="{% static 'js/cad/command-line/cad-command-line.js' %}"></script>
+
+<!-- GENERIC CONTROLLER, ENTITIES, KEYBOARD AND IMPORT -->
 <script src="{% static 'js/cad/cad-tools.js' %}"></script>
-<script src="{% static 'js/cad/cad-entities.js' %}"></script>
-<script src="{% static 'js/cad/cad-keyboard.js' %}"></script>
-<script src="{% static 'js/cad/cad-import.js' %}"></script>
+<script src="{% static 'js/cad/entities/cad-entities.js' %}"></script>
+<script src="{% static 'js/cad/interaction/cad-keyboard.js' %}"></script>
+<script src="{% static 'js/cad/io/cad-import.js' %}"></script>

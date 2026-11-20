@@ -125,15 +125,9 @@ function onMouseWheel(event) {
 
     const pt = getDrawPoint();
 
-    if (currentTool === 'copy' && copyPreview) {
-        updateCopyPreview(pt);
-    }
-    else if (currentTool === 'move' && movePreview) {
-        updateMovePreview(pt);
-    }
-    else if (isDrawing && basePoint) {
-        updateActiveBufferPreview(pt);
-    }
+    const activeTool = CAD.getTool(currentTool);
+    if (activeTool && typeof activeTool.onPreview === 'function') activeTool.onPreview(pt, CAD.createContext());
+    else if (isDrawing && basePoint) updateActiveBufferPreview(pt);
 }
 
 function onWindowResize() {

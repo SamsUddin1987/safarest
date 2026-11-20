@@ -134,6 +134,7 @@
         const tool = {};
 
         [
+            'onStart',
             'onClick',
             'onPreview',
             'onOption',

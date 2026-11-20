@@ -356,8 +356,8 @@
                         <hr>
 
                         <button class="cad-menu-item" disabled>Cut</button>
-                        <button class="cad-menu-item" disabled>Copy</button>
-                        <button class="cad-menu-item" disabled>Paste</button>
+                        <button class="cad-menu-item" onclick="window.copySelectedObjects()">Copy</button>
+                        <button class="cad-menu-item" onclick="window.pasteCadObjects()">Paste</button>
 
                         <hr>
 
@@ -428,23 +428,23 @@
                     <button class="cad-menu-trigger" type="button">Modify</button>
                     <div class="cad-menu-panel">
 
-                        <button class="cad-menu-item" onclick="window.deleteSelectedObjects()">
+                        <button class="cad-menu-item" onclick="window.runCADCommand('ERASE')">
                             Erase
                         </button>
 
                         <hr>
 
-                        <button class="cad-menu-item" onclick="window.setTool('move')">Move</button>
-                        <button class="cad-menu-item" disabled>Copy</button>
-                        <button class="cad-menu-item" disabled>Rotate</button>
-                        <button class="cad-menu-item" disabled>Scale</button>
-                        <button class="cad-menu-item" disabled>Mirror</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('MOVE')">Move</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('COPY')">Copy</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('ROTATE')">Rotate</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('SCALE')">Scale</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('MIRROR')">Mirror</button>
                         <button class="cad-menu-item" disabled>Offset</button>
 
                         <hr>
 
-                        <button class="cad-menu-item" disabled>Trim</button>
-                        <button class="cad-menu-item" disabled>Extend</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('TRIM')">Trim</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('EXTEND')">Extend</button>
                         <button class="cad-menu-item" disabled>Fillet</button>
                         <button class="cad-menu-item" disabled>Chamfer</button>
                         <button class="cad-menu-item" disabled>Stretch</button>
@@ -651,6 +651,17 @@
 <script src="{% static 'js/cad/commands/draw/rectangle.js' %}"></script>
 <script src="{% static 'js/cad/commands/draw/circle.js' %}"></script>
 <script src="{% static 'js/cad/commands/draw/text.js' %}"></script>
+
+<!-- MODIFY COMMANDS -->
+<script src="{% static 'js/cad/core/modify-utils.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/erase.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/move.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/copy.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/rotate.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/scale.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/mirror.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/trim.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/extend.js' %}"></script>
 
 <!-- INTERACTION -->
 <script src="{% static 'js/cad/interaction/cad-input.js' %}"></script>

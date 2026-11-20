@@ -7,7 +7,6 @@ const RE_POLAR = /^([-+]?(?:\d+\.?\d*|\.\d+))<([-+]?(?:\d+\.?\d*|\.\d+))$/;
 // run = implemented here. No run = real AutoCAD command that is recognised but not built yet.
 const planned = (name, aliases, desc) => ({ name, aliases, desc, run: null });
 const CAD_COMMANDS = [
-    { name: 'ERASE', aliases: ['E'], desc: 'Delete objects', run: () => cmdErase() },
     { name: 'SELECT', aliases: [], desc: 'Select objects (type ALL to select everything)', run: () => cmdSelect() },
     { name: 'UNDO', aliases: ['U'], desc: 'Undo the last action', run: () => undo() },
     { name: 'REDO', aliases: [], desc: 'Redo the last undone action', run: () => redo() },
@@ -31,14 +30,7 @@ const CAD_COMMANDS = [
     planned('XLINE', ['XL'], 'Construction line'),
     planned('RAY', [], 'Ray'),
     planned('HATCH', ['H'], 'Hatch / fill an area'),
-    { name: 'MOVE', aliases: ['M'], desc: 'Move selected objects', run: () => setTool('move') },
-    { name: 'COPY', aliases: ['CO', 'CP'], desc: 'Copy selected objects', run: () => setTool('copy') },
-    planned('ROTATE', ['RO'], 'Rotate objects'),
-    planned('SCALE', ['SC'], 'Scale objects'),
-    planned('MIRROR', ['MI'], 'Mirror objects'),
     planned('OFFSET', ['O'], 'Offset objects'),
-    planned('TRIM', ['TR'], 'Trim objects to edges'),
-    planned('EXTEND', ['EX'], 'Extend objects to edges'),
     planned('FILLET', ['F'], 'Round a corner'),
     planned('CHAMFER', ['CHA'], 'Bevel a corner'),
     planned('STRETCH', ['S'], 'Stretch objects'),
@@ -330,17 +322,6 @@ function runCommand(cmd) {
     // typing a new command ends the one in progress (a polyline in progress is kept)
     if (currentTool !== 'select') {
 
-        const activeTool = CAD.getTool(currentTool);
-
-        if (
-            activeTool &&
-            typeof activeTool.onFinish === 'function'
-        ) {
-
-            activeTool.onFinish(CAD.createContext());
-
-        }
-
         finishTool();
     }
     pendingCommand = null;
@@ -426,15 +407,6 @@ function commandEnter() {
 
 function cancelCommand() {
     const wasActive = currentTool !== 'select' || isDrawing || !!pendingCommand;
-    const activeTool = CAD.getTool(currentTool);
-    if (
-        activeTool &&
-        typeof activeTool.onFinish === 'function'
-    ) {
-
-        activeTool.onFinish(CAD.createContext());
-
-    }
     pendingCommand = null;
     cancelBoxSelect();
     clearSelection();
@@ -462,16 +434,6 @@ function cmdSelect() {
         prompt: 'SELECT — Select objects (click, drag a window, or type ALL), then press ENTER:',
         onText: up => { if (up === 'ALL') { selectAll(); return true; } return false; },
         onEnter: () => { pendingCommand = null; setCommandPrompt(`Command: ${selectedObjects.length} object(s) selected.`); }
-    });
-}
-
-function cmdErase() {
-    if (selectedObjects.length > 0) { deleteSelectedObjects(); return; }   // objects already selected: erase now
-    startPending({
-        name: 'ERASE',
-        prompt: 'ERASE — Select objects (click, drag a window, or type ALL), then press ENTER:',
-        onText: up => { if (up === 'ALL') { selectAll(); return true; } return false; },
-        onEnter: () => { pendingCommand = null; deleteSelectedObjects(); }
     });
 }
 
@@ -587,7 +549,7 @@ function cmdHelp() {
         );
     [
         'DRAW:    LINE (L)  PLINE (PL)  RECTANG (REC)  CIRCLE (C)  TEXT (DT)  MTEXT (T)',
-        'MODIFY:  ERASE (E)  UNDO (U)  REDO  SELECT   —  or select objects and press Delete',
+        'MODIFY:  ERASE (E)  MOVE (M)  COPY (CO)  ROTATE (RO)  SCALE (SC)  MIRROR (MI)  TRIM (TR)  EXTEND (EX)',
         'VIEW:    ZOOM (Z) [E / A / W / I / O / 2X]   PAN (P)   REGEN (RE)',
         'INQUIRY: DIST (DI)  ID',
         'SETTINGS: GRID (F7)  ORTHO (F8)  SNAP (SN, F9)  OSNAP (OS, F3)',
@@ -599,26 +561,3 @@ function cmdHelp() {
     renderCmdOverlay();
 }
 
-// ==========================================
-// 5. BULK ERASE / DELETE OPERATIONS
-// ==========================================
-function deleteSelectedObjects() {
-    if (selectedObjects.length === 0) {
-        setCommandPrompt('No objects selected to delete.');
-        return;
-    }
-
-    const removed = [...selectedObjects];
-    removed.forEach(obj => {
-        obj.material.color.setHex(obj.userData.originalColor || 0xffffff);
-        removeEntity(obj);   // geometry is kept so UNDO can bring it back
-    });
-
-    selectedObjects = [];
-    hoverObject = null;
-    undoStack.push({ type: 'delete', objs: removed });
-    redoStack = [];
-    notify(`Erased ${removed.length} object(s). (Ctrl+Z to undo)`);
-}
-
-// ==========================================

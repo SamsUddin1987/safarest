@@ -44,6 +44,9 @@ function undo() {
     } else if (a.type === 'move') {
         translateCadObjects(a.objs, -a.dx, -a.dy);
 
+    } else if (a.type === 'modify') {
+        CAD.createContext().restoreObjects(a.before);
+
     } else {
         a.objs.forEach(o => addEntity(o, false));
     }
@@ -62,6 +65,9 @@ function redo() {
 
     } else if (a.type === 'move') {
         translateCadObjects(a.objs, a.dx, a.dy);
+
+    } else if (a.type === 'modify') {
+        CAD.createContext().restoreObjects(a.after);
 
     } else {
         a.objs.forEach(o => removeEntity(o));

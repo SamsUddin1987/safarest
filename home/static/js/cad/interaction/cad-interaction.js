@@ -44,15 +44,9 @@ function onMouseMove(event) {
 
         const panPt = getDrawPoint();
 
-        if (currentTool === 'copy' && copyPreview) {
-            updateCopyPreview(panPt);
-        }
-        else if (currentTool === 'move' && movePreview) {
-            updateMovePreview(panPt);
-        }
-        else if (isDrawing && basePoint) {
-            updateActiveBufferPreview(panPt);
-        }
+        const activeTool = CAD.getTool(currentTool);
+        if (activeTool && typeof activeTool.onPreview === 'function') activeTool.onPreview(panPt, CAD.createContext());
+        else if (isDrawing && basePoint) updateActiveBufferPreview(panPt);
 
         return;
     }
@@ -127,15 +121,9 @@ function onMouseMove(event) {
         }
     }
 
-    // MOVE LIVE PREVIEW
-    if (currentTool === 'move' && isDrawing && movePreview) {
-        updateMovePreview(pt);
-        return;
-    }
-
-    // COPY LIVE PREVIEW
-    if (currentTool === 'copy' && isDrawing && copyPreview) {
-        updateCopyPreview(pt);
+    const activeTool = CAD.getTool(currentTool);
+    if (activeTool && typeof activeTool.onPreview === 'function') {
+        activeTool.onPreview(pt, CAD.createContext());
         return;
     }
 

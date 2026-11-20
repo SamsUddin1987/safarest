@@ -36,7 +36,6 @@ let activeBufferObj = null;
 let drawnObjects = [];         // Holds all active scene entities
 let selectedObjects = [];      // Currently selected items
 let cadClipboard = [];
-let copySourceObjects = [];
 let hoverObject = null;        // Currently hovered item
 
 // UI Dynamic Input Elements
@@ -51,12 +50,6 @@ const BOX_DRAG_THRESHOLD = 5;  // px of movement before a click becomes a box dr
 // Direct object dragging (AutoCAD-style)
 let objectDrag = null;
 const OBJECT_DRAG_THRESHOLD = 3;
-
-// COPY command live preview
-let copyPreview = null;
-
-// MOVE command live preview
-let movePreview = null;
 
 // Clipboard insertion reference point
 let cadClipboardBasePoint = null;
@@ -113,6 +106,11 @@ const TOOL_TO_CMD = {
     erase: 'ERASE',
     move: 'MOVE',
     copy: 'COPY',
+    rotate: 'ROTATE',
+    scale: 'SCALE',
+    mirror: 'MIRROR',
+    trim: 'TRIM',
+    extend: 'EXTEND',
     pan: 'PAN',
     dist: 'DIST',
     id: 'ID'
@@ -304,8 +302,8 @@ function createCADCommandContext() {
         // TOOL OPERATIONS
         // ---------------------------------
 
-        setTool(toolName, copySources) {
-            return setTool(toolName, copySources);
+        setTool(toolName, options) {
+            return setTool(toolName, options);
         },
 
         finishCurrentTool() {
@@ -398,7 +396,80 @@ function createCADCommandContext() {
 
         formatValue(value) {
             return formatVal(value);
-        }
+        },
+
+
+        // ---------------------------------
+        // MODIFY COMMAND SUPPORT
+        // ---------------------------------
+
+        getObjects() { return [...drawnObjects]; },
+        getSelectedObjects() { return [...selectedObjects]; },
+        getWorldBounds(object) { return getWorldBounds(object); },
+        cloneObject(object) { return cloneCadObject(object); },
+        translateObjects(objects, dx, dy) { return translateCadObjects(objects, dx, dy); },
+        applyMatrix(objects, matrix) {
+            (objects || []).forEach(object => {
+                if (object.geometry) {
+                    object.geometry.applyMatrix4(matrix);
+                    object.geometry.computeBoundingSphere();
+                }
+                if (object.isSprite) object.position.applyMatrix4(matrix);
+                const data = object.userData || {};
+                const transformPoint = point => {
+                    const v = new THREE.Vector3(point.x, point.y, point.z || 0).applyMatrix4(matrix);
+                    point.x = v.x; point.y = v.y; if ('z' in point) point.z = v.z;
+                };
+                if (data.center) transformPoint(data.center);
+                if (Array.isArray(data.points)) data.points.forEach(transformPoint);
+                if (data.type === 'circle' && data.radius !== undefined) {
+                    const sx = new THREE.Vector3(1, 0, 0).applyMatrix4(matrix).length();
+                    const sy = new THREE.Vector3(0, 1, 0).applyMatrix4(matrix).length();
+                    data.radius *= (sx + sy) / 2;
+                }
+            });
+        },
+        captureObjects(objects) {
+            return (objects || []).map(object => ({
+                object,
+                geometry: object.geometry ? object.geometry.clone() : null,
+                position: object.position.clone(),
+                quaternion: object.quaternion.clone(),
+                scale: object.scale.clone(),
+                userData: JSON.parse(JSON.stringify(object.userData || {}))
+            }));
+        },
+        restoreObjects(snapshots) {
+            (snapshots || []).forEach(snapshot => {
+                const object = snapshot.object;
+                if (object.geometry && object.geometry !== snapshot.geometry) object.geometry.dispose();
+                object.geometry = snapshot.geometry ? snapshot.geometry.clone() : object.geometry;
+                object.position.copy(snapshot.position);
+                object.quaternion.copy(snapshot.quaternion);
+                object.scale.copy(snapshot.scale);
+                object.userData = JSON.parse(JSON.stringify(snapshot.userData || {}));
+            });
+        },
+        recordModify(objects, before) {
+            undoStack.push({ type: 'modify', before, after: this.captureObjects(objects) });
+            redoStack = [];
+        },
+        setSelection(objects) {
+            clearSelection();
+            (objects || []).forEach(object => {
+                if (drawnObjects.includes(object) && !selectedObjects.includes(object)) {
+                    selectedObjects.push(object);
+                    if (object.material && object.material.color) object.material.color.setHex(0x00ffff);
+                }
+            });
+        },
+        clearSelection() { return clearSelection(); },
+        getThree() { return THREE; },
+        getPendingCommand() { return pendingCommand; },
+        setPendingCommand(value) { pendingCommand = value; },
+        getToolName() { return currentTool; },
+        setToolName(name, options) { return setTool(name, options); },
+        getLastPoint() { return lastPoint ? lastPoint.clone() : null; }
 
     });
 
