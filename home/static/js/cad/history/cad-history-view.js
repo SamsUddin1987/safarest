@@ -47,6 +47,10 @@ function undo() {
     } else if (a.type === 'modify') {
         CAD.createContext().restoreObjects(a.before);
 
+    } else if (a.type === 'replace') {
+        (a.afterObjects || []).forEach(o => removeEntity(o));
+        (a.beforeObjects || []).forEach(o => addEntity(o, false));
+
     } else {
         a.objs.forEach(o => addEntity(o, false));
     }
@@ -68,6 +72,10 @@ function redo() {
 
     } else if (a.type === 'modify') {
         CAD.createContext().restoreObjects(a.after);
+
+    } else if (a.type === 'replace') {
+        (a.beforeObjects || []).forEach(o => removeEntity(o));
+        (a.afterObjects || []).forEach(o => addEntity(o, false));
 
     } else {
         a.objs.forEach(o => removeEntity(o));

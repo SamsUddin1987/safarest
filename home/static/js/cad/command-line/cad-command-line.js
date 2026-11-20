@@ -7,6 +7,7 @@ const RE_POLAR = /^([-+]?(?:\d+\.?\d*|\.\d+))<([-+]?(?:\d+\.?\d*|\.\d+))$/;
 // run = implemented here. No run = real AutoCAD command that is recognised but not built yet.
 const planned = (name, aliases, desc) => ({ name, aliases, desc, run: null });
 const CAD_COMMANDS = [
+    { name: 'ERASE', aliases: ['E'], desc: 'Delete objects', run: () => cmdErase() },
     { name: 'SELECT', aliases: [], desc: 'Select objects (type ALL to select everything)', run: () => cmdSelect() },
     { name: 'UNDO', aliases: ['U'], desc: 'Undo the last action', run: () => undo() },
     { name: 'REDO', aliases: [], desc: 'Redo the last undone action', run: () => redo() },
@@ -30,13 +31,18 @@ const CAD_COMMANDS = [
     planned('XLINE', ['XL'], 'Construction line'),
     planned('RAY', [], 'Ray'),
     planned('HATCH', ['H'], 'Hatch / fill an area'),
+    { name: 'MOVE', aliases: ['M'], desc: 'Move selected objects', run: () => setTool('move') },
+    { name: 'COPY', aliases: ['CO', 'CP'], desc: 'Copy selected objects', run: () => setTool('copy') },
+    planned('ROTATE', ['RO'], 'Rotate objects'),
+    planned('SCALE', ['SC'], 'Scale objects'),
+    planned('MIRROR', ['MI'], 'Mirror objects'),
     planned('OFFSET', ['O'], 'Offset objects'),
+    planned('TRIM', ['TR'], 'Trim objects to edges'),
+    planned('EXTEND', ['EX'], 'Extend objects to edges'),
     planned('FILLET', ['F'], 'Round a corner'),
     planned('CHAMFER', ['CHA'], 'Bevel a corner'),
     planned('STRETCH', ['S'], 'Stretch objects'),
     planned('ARRAY', ['AR'], 'Array objects'),
-    planned('EXPLODE', ['X'], 'Explode objects'),
-    planned('JOIN', ['J'], 'Join objects'),
     planned('BREAK', ['BR'], 'Break an object'),
     planned('LENGTHEN', ['LEN'], 'Change object length'),
     planned('ALIGN', ['AL'], 'Align objects'),
@@ -83,6 +89,7 @@ const CAD_COMMAND_CATEGORIES = {
     MIRROR: 'modify',
     TRIM: 'modify',
     EXTEND: 'modify',
+    EXPLODE: 'modify',
 
     ZOOM: 'view',
     PAN: 'view',
@@ -322,6 +329,17 @@ function runCommand(cmd) {
     // typing a new command ends the one in progress (a polyline in progress is kept)
     if (currentTool !== 'select') {
 
+        const activeTool = CAD.getTool(currentTool);
+
+        if (
+            activeTool &&
+            typeof activeTool.onFinish === 'function'
+        ) {
+
+            activeTool.onFinish(CAD.createContext());
+
+        }
+
         finishTool();
     }
     pendingCommand = null;
@@ -374,6 +392,29 @@ function commandEnter() {
         finishTool();
         return;
     }
+
+    // JOIN is a selection-based modify command. One ENTER or SPACE
+    // commits the selected connected entities; do not fall through to
+    // command repetition or require a second confirmation key.
+    if (currentTool === 'join') {
+        const joinTool = CAD.getTool('join');
+        if (joinTool && typeof joinTool.onEnter === 'function') {
+            joinTool.onEnter(CAD.createContext());
+        }
+        return;
+    }
+
+    // EXPLODE is a selection-based modify command. A single ENTER or SPACE
+    // must commit the current selection; it must not fall through to command
+    // repetition or require a second confirmation key.
+    if (currentTool === 'explode') {
+        const explodeTool = CAD.getTool('explode');
+        if (explodeTool && typeof explodeTool.onEnter === 'function') {
+            explodeTool.onEnter(CAD.createContext());
+        }
+        return;
+    }
+
     if (currentTool !== 'select') {
 
         const activeTool = CAD.getTool(currentTool);
@@ -407,6 +448,15 @@ function commandEnter() {
 
 function cancelCommand() {
     const wasActive = currentTool !== 'select' || isDrawing || !!pendingCommand;
+    const activeTool = CAD.getTool(currentTool);
+    if (
+        activeTool &&
+        typeof activeTool.onFinish === 'function'
+    ) {
+
+        activeTool.onFinish(CAD.createContext());
+
+    }
     pendingCommand = null;
     cancelBoxSelect();
     clearSelection();
@@ -434,6 +484,16 @@ function cmdSelect() {
         prompt: 'SELECT — Select objects (click, drag a window, or type ALL), then press ENTER:',
         onText: up => { if (up === 'ALL') { selectAll(); return true; } return false; },
         onEnter: () => { pendingCommand = null; setCommandPrompt(`Command: ${selectedObjects.length} object(s) selected.`); }
+    });
+}
+
+function cmdErase() {
+    if (selectedObjects.length > 0) { deleteSelectedObjects(); return; }   // objects already selected: erase now
+    startPending({
+        name: 'ERASE',
+        prompt: 'ERASE — Select objects (click, drag a window, or type ALL), then press ENTER:',
+        onText: up => { if (up === 'ALL') { selectAll(); return true; } return false; },
+        onEnter: () => { pendingCommand = null; deleteSelectedObjects(); }
     });
 }
 
@@ -549,7 +609,7 @@ function cmdHelp() {
         );
     [
         'DRAW:    LINE (L)  PLINE (PL)  RECTANG (REC)  CIRCLE (C)  TEXT (DT)  MTEXT (T)',
-        'MODIFY:  ERASE (E)  MOVE (M)  COPY (CO)  ROTATE (RO)  SCALE (SC)  MIRROR (MI)  TRIM (TR)  EXTEND (EX)',
+        'MODIFY:  ERASE (E)  UNDO (U)  REDO  SELECT   —  or select objects and press Delete',
         'VIEW:    ZOOM (Z) [E / A / W / I / O / 2X]   PAN (P)   REGEN (RE)',
         'INQUIRY: DIST (DI)  ID',
         'SETTINGS: GRID (F7)  ORTHO (F8)  SNAP (SN, F9)  OSNAP (OS, F3)',
@@ -561,3 +621,26 @@ function cmdHelp() {
     renderCmdOverlay();
 }
 
+// ==========================================
+// 5. BULK ERASE / DELETE OPERATIONS
+// ==========================================
+function deleteSelectedObjects() {
+    if (selectedObjects.length === 0) {
+        setCommandPrompt('No objects selected to delete.');
+        return;
+    }
+
+    const removed = [...selectedObjects];
+    removed.forEach(obj => {
+        obj.material.color.setHex(obj.userData.originalColor || 0xffffff);
+        removeEntity(obj);   // geometry is kept so UNDO can bring it back
+    });
+
+    selectedObjects = [];
+    hoverObject = null;
+    undoStack.push({ type: 'delete', objs: removed });
+    redoStack = [];
+    notify(`Erased ${removed.length} object(s). (Ctrl+Z to undo)`);
+}
+
+// ==========================================

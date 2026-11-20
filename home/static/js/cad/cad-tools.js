@@ -114,11 +114,9 @@ function handleToolClick(pt) {
 }
 
 function finishTool() {
-    isDrawing = false;
-    basePoint = null;
-    currentPoints = [];
-    toolStep = 0;
-    clearActiveBuffer();
+    // setTool() invokes the active tool's onFinish handler BEFORE clearing
+    // its state. This is important for commands such as PLINE, which must
+    // commit completed vertices when ESC or another command ends the tool.
     hideDynamicInput();
     setTool('select');
 }

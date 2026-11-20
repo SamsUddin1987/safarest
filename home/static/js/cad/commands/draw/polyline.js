@@ -141,8 +141,16 @@
 
                 commit(points, context);
 
-                // Keep POLYLINE command active
-                context.setTool('polyline');
+                // Keep POLYLINE active, but clear the committed chain so
+                // onFinish cannot commit the same vertices a second time.
+                context.updateState({
+                    currentPoints: [],
+                    basePoint: null,
+                    isDrawing: false,
+                    toolStep: 0
+                });
+                context.clearPreview();
+                context.setPrompt('PLINE — Pick start point:');
 
             } else {
 
@@ -164,7 +172,14 @@
 
             if (points.length === 0) {
 
-                context.setTool('polyline');
+                context.updateState({
+                    currentPoints: [],
+                    basePoint: null,
+                    isDrawing: false,
+                    toolStep: 0
+                });
+                context.clearPreview();
+                context.setPrompt('PLINE — Pick start point:');
 
             } else {
 
@@ -195,12 +210,26 @@
 
             commit(state.currentPoints, context);
 
-            context.setTool('polyline');
+            context.updateState({
+                currentPoints: [],
+                basePoint: null,
+                isDrawing: false,
+                toolStep: 0
+            });
+            context.clearPreview();
+            context.setPrompt('PLINE — Pick start point:');
 
         } else if (state.isDrawing) {
 
-            // Discard incomplete first point but keep command active
-            context.setTool('polyline');
+            // Discard incomplete first point but keep command active.
+            context.updateState({
+                currentPoints: [],
+                basePoint: null,
+                isDrawing: false,
+                toolStep: 0
+            });
+            context.clearPreview();
+            context.setPrompt('PLINE — Pick start point:');
 
         } else {
 

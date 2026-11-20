@@ -439,6 +439,8 @@
                         <button class="cad-menu-item" onclick="window.runCADCommand('ROTATE')">Rotate</button>
                         <button class="cad-menu-item" onclick="window.runCADCommand('SCALE')">Scale</button>
                         <button class="cad-menu-item" onclick="window.runCADCommand('MIRROR')">Mirror</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('JOIN')">Join</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('EXTRUDE')">Extrude</button>
                         <button class="cad-menu-item" disabled>Offset</button>
 
                         <hr>
@@ -452,8 +454,7 @@
                         <hr>
 
                         <button class="cad-menu-item" disabled>Array</button>
-                        <button class="cad-menu-item" disabled>Explode</button>
-                        <button class="cad-menu-item" disabled>Join</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('EXPLODE')">Explode</button>
 
                     </div>
                 </div>
@@ -479,6 +480,7 @@
                         </div>
 
                         <button class="cad-menu-item" disabled>Pan</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('TOP')">Top / Plan View</button>
 
                         <hr>
 
@@ -662,6 +664,8 @@
 <script src="{% static 'js/cad/commands/modify/mirror.js' %}"></script>
 <script src="{% static 'js/cad/commands/modify/trim.js' %}"></script>
 <script src="{% static 'js/cad/commands/modify/extend.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/join.js' %}"></script>
+<script src="{% static 'js/cad/commands/modify/explode.js' %}"></script>
 
 <!-- INTERACTION -->
 <script src="{% static 'js/cad/interaction/cad-input.js' %}"></script>

@@ -9,12 +9,37 @@
     if (!CAD) throw new Error('CAD registry must load before modify utilities.');
 
     function selected(context, commandName) {
-        const objects = context.getSelectedObjects();
-        if (objects.length === 0) {
-            context.notify(`${commandName}: Select objects first.`);
-            return null;
-        }
-        return objects;
+        return context.getSelectedObjects();
+    }
+
+    function distanceToSegment(point, a, b) {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const lengthSq = dx * dx + dy * dy;
+        if (lengthSq < 1e-12) return point.distanceTo(a);
+        const t = Math.max(0, Math.min(1,
+            ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq
+        ));
+        const nearest = new THREE.Vector3(a.x + t * dx, a.y + t * dy, 0);
+        return nearest.distanceTo(point);
+    }
+
+    function findObjectAtPoint(context, point, excluded = []) {
+        const tolerance = context.getPickTolerance ? context.getPickTolerance(18) : 1;
+        let bestObject = null;
+        let bestDistance = Infinity;
+        context.getObjects().forEach(object => {
+            if (excluded.includes(object)) return;
+            const points = pointFromGeometry(object);
+            for (let i = 1; i < points.length; i++) {
+                const distance = distanceToSegment(point, points[i - 1], points[i]);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestObject = object;
+                }
+            }
+        });
+        return bestDistance <= tolerance ? bestObject : null;
     }
 
     function cloneForPreview(context, sourceObjects) {
@@ -29,9 +54,10 @@
             materials.forEach(material => {
                 if (!material) return;
                 material.transparent = true;
-                material.opacity = 0.4;
+                material.opacity = 0.68;
                 material.depthWrite = false;
-                if (material.color) material.color.setHex(0x00ffff);
+                material.depthTest = true;
+                if (material.color) material.color.setHex(0x00e5ff);
             });
 
             scene.add(copy);
@@ -192,60 +218,75 @@
         return setGeometryPoints(target, remainingPoints);
     }
 
-    function extendAt(context, target, clickPoint, boundaries) {
+    function extendAt(context, target, clickPoint, boundaries, pickTolerance) {
         const points = pointFromGeometry(target);
         if (points.length < 2) return false;
 
         const boundarySegments = segments(boundaries);
-        const ends = [
-            { index: 0, fixed: points[1], end: points[0] },
-            {
-                index: points.length - 1,
-                fixed: points[points.length - 2],
-                end: points[points.length - 1]
-            }
-        ];
+        let nodeIndex = 0;
+        let nodeDistance = Infinity;
 
-        ends.sort((a, b) => (
-            a.end.distanceTo(clickPoint) - b.end.distanceTo(clickPoint)
-        ));
-
-        const chosen = ends[0];
-        const dx = chosen.end.x - chosen.fixed.x;
-        const dy = chosen.end.y - chosen.fixed.y;
-        const length = Math.hypot(dx, dy);
-        if (length < 1e-10) return false;
-
-        const direction = new THREE.Vector3(dx / length, dy / length, 0);
-        const farPoint = chosen.end.clone().add(
-            direction.clone().multiplyScalar(1e9)
-        );
-        const currentDistance = chosen.end.clone()
-            .sub(chosen.fixed)
-            .dot(direction);
-        let nearestHit = null;
-
-        boundarySegments.forEach(segment => {
-            const hit = intersect(chosen.fixed, farPoint, segment.a, segment.b);
-            if (!hit) return;
-
-            const distance = hit.point.clone()
-                .sub(chosen.fixed)
-                .dot(direction);
-
-            if (
-                distance > currentDistance + 1e-8 &&
-                (!nearestHit || distance < nearestHit.distance)
-            ) {
-                nearestHit = { point: hit.point, distance };
+        // EXTEND now works from every vertex/grip, including internal polyline
+        // nodes. The clicked node is moved to the nearest valid boundary hit.
+        points.forEach((vertex, index) => {
+            const distance = vertex.distanceTo(clickPoint);
+            if (distance < nodeDistance) {
+                nodeDistance = distance;
+                nodeIndex = index;
             }
         });
 
-        if (!nearestHit) return false;
+        if (pickTolerance !== undefined && nodeDistance > pickTolerance) return false;
 
-        if (chosen.index === 0) points[0] = nearestHit.point;
-        else points[points.length - 1] = nearestHit.point;
+        const candidates = [];
+        if (nodeIndex > 0) {
+            candidates.push({
+                fixed: points[nodeIndex - 1],
+                end: points[nodeIndex],
+                index: nodeIndex
+            });
+        }
+        if (nodeIndex < points.length - 1) {
+            candidates.push({
+                fixed: points[nodeIndex + 1],
+                end: points[nodeIndex],
+                index: nodeIndex
+            });
+        }
 
+        let bestHit = null;
+        candidates.forEach(candidate => {
+            const dx = candidate.end.x - candidate.fixed.x;
+            const dy = candidate.end.y - candidate.fixed.y;
+            const length = Math.hypot(dx, dy);
+            if (length < 1e-10) return;
+
+            const direction = new THREE.Vector3(dx / length, dy / length, 0);
+            const farPoint = candidate.end.clone().add(
+                direction.clone().multiplyScalar(1e9)
+            );
+            const currentDistance = candidate.end.clone()
+                .sub(candidate.fixed)
+                .dot(direction);
+
+            boundarySegments.forEach(segment => {
+                const hit = intersect(candidate.fixed, farPoint, segment.a, segment.b);
+                if (!hit) return;
+
+                const distance = hit.point.clone()
+                    .sub(candidate.fixed)
+                    .dot(direction);
+                if (distance <= currentDistance + 1e-8) return;
+
+                const nodeToHit = hit.point.distanceTo(candidate.end);
+                if (!bestHit || nodeToHit < bestHit.nodeToHit) {
+                    bestHit = { point: hit.point, nodeToHit };
+                }
+            });
+        });
+
+        if (!bestHit) return false;
+        points[nodeIndex] = bestHit.point;
         return setGeometryPoints(target, points);
     }
 
@@ -257,6 +298,8 @@
         pointFromGeometry,
         setGeometryPoints,
         segments,
+        distanceToSegment,
+        findObjectAtPoint,
         trimAt,
         extendAt
     };

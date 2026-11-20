@@ -45,7 +45,7 @@
                 basePoint = point.clone();
                 previewObjects = Utils.cloneForPreview(context, objects);
                 context.updateState({ isDrawing: true, basePoint });
-                context.setPrompt('MOVE — Pick destination point:');
+                context.setPrompt('MOVE — Move the cyan preview to the destination and click to place. Original remains until confirmed.');
                 return;
             }
 

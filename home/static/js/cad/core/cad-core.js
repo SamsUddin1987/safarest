@@ -35,6 +35,9 @@ let activeBufferObj = null;
 // Drawing & Selection Memory
 let drawnObjects = [];         // Holds all active scene entities
 let selectedObjects = [];      // Currently selected items
+let selectionGripGroup = null; // AutoCAD-style grips for selected entities
+let selectionGripMeshes = [];
+let selectionGripDrag = null;
 let cadClipboard = [];
 let hoverObject = null;        // Currently hovered item
 
@@ -111,6 +114,8 @@ const TOOL_TO_CMD = {
     mirror: 'MIRROR',
     trim: 'TRIM',
     extend: 'EXTEND',
+    join: 'JOIN',
+    extrude: 'EXTRUDE',
     pan: 'PAN',
     dist: 'DIST',
     id: 'ID'
@@ -185,7 +190,197 @@ function initCADViewer() {
 
 function animate() {
     requestAnimationFrame(animate);
+    // Keep grip markers a constant screen size while zooming/panning.
+    updateSelectionGrips();
     renderer.render(scene, camera);
+}
+
+// ==========================================
+// AUTOCAD-STYLE SELECTION GRIPS
+// ==========================================
+// Grips are rendered in a separate overlay group. They are deliberately NOT
+// added to drawnObjects, so they never participate in entity picking,
+// selection windows, snapping, saving, or CAD history.
+function ensureSelectionGripGroup() {
+    if (!scene || !THREE) return null;
+    if (!selectionGripGroup) {
+        selectionGripGroup = new THREE.Group();
+        selectionGripGroup.name = 'CAD_SELECTION_GRIPS';
+        selectionGripGroup.renderOrder = 10000;
+        scene.add(selectionGripGroup);
+    }
+    return selectionGripGroup;
+}
+
+function getSelectionGripDescriptors(object) {
+    if (!object) return [];
+    object.updateMatrixWorld(true);
+    const data = object.userData || {};
+    const descriptors = [];
+    if (data.type === 'solid') return descriptors;
+
+    // Circle centre grip: dragging it translates the complete circle.
+    if (data.type === 'circle' && data.center) {
+        const center = data.center.isVector3
+            ? data.center.clone()
+            : new THREE.Vector3(data.center.x, data.center.y, data.center.z || 0);
+        return [{ object, kind: 'circle-center', index: 0, point: center }];
+    }
+
+    // Every stored polyline/rectangle vertex gets an editable grip.
+    if (Array.isArray(data.points) && data.points.length) {
+        const source = data.points;
+        let count = source.length;
+        // Closed paths store the first vertex twice. Show only one grip there.
+        if (count > 2) {
+            const first = source[0], last = source[count - 1];
+            if (first && last && Math.hypot(first.x-last.x, first.y-last.y, (first.z||0)-(last.z||0)) < 1e-7) count -= 1;
+        }
+        for (let index = 0; index < count; index++) {
+            const value = source[index];
+            if (!value) continue;
+            const point = value.isVector3
+                ? value.clone()
+                : new THREE.Vector3(value.x, value.y, value.z || 0);
+            descriptors.push({ object, kind: 'vertex', index, point });
+        }
+        return descriptors;
+    }
+
+    // LINE and other simple vertex entities: first and last geometry vertices.
+    const attribute = object.geometry && object.geometry.getAttribute
+        ? object.geometry.getAttribute('position') : null;
+    if (attribute && attribute.count) {
+        const indices = attribute.count === 1 ? [0] : [0, attribute.count - 1];
+        indices.forEach(index => {
+            const local = new THREE.Vector3().fromBufferAttribute(attribute, index);
+            descriptors.push({ object, kind: 'vertex', index, point: object.localToWorld(local) });
+        });
+    }
+    return descriptors;
+}
+
+function createSelectionGripMesh() {
+    const group = new THREE.Group();
+    const fill = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({
+            color: 0x36a9e8,
+            depthTest: false,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        })
+    );
+    const outline = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.PlaneGeometry(1, 1)),
+        new THREE.LineBasicMaterial({ color: 0x102b3b, depthTest: false, depthWrite: false })
+    );
+    fill.renderOrder = 10000;
+    outline.renderOrder = 10001;
+    group.add(fill, outline);
+    group.userData.isCadSelectionGrip = true;
+    return group;
+}
+
+function updateSelectionGrips() {
+    if (!scene || !camera || !renderer || !THREE) return;
+    const group = ensureSelectionGripGroup();
+    if (!group) return;
+
+    const desired = [];
+    selectedObjects.forEach(object => {
+        getSelectionGripDescriptors(object).forEach(descriptor => desired.push(descriptor));
+    });
+
+    while (selectionGripMeshes.length < desired.length) {
+        const grip = createSelectionGripMesh();
+        selectionGripMeshes.push(grip);
+        group.add(grip);
+    }
+    while (selectionGripMeshes.length > desired.length) {
+        const grip = selectionGripMeshes.pop();
+        group.remove(grip);
+        grip.traverse(child => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                (Array.isArray(child.material) ? child.material : [child.material])
+                    .forEach(material => material.dispose());
+            }
+        });
+    }
+
+    const canvasWidth = renderer.domElement.clientWidth || 1;
+    const worldPerPixel = (camera.right - camera.left) /
+        ((camera.zoom || 1) * canvasWidth);
+    const gripSize = Math.max(worldPerPixel * 7, 1e-5);
+
+    desired.forEach((descriptor, index) => {
+        const grip = selectionGripMeshes[index];
+        const point = descriptor.point;
+        grip.userData.cadGrip = descriptor;
+        grip.position.set(point.x, point.y, Math.max(point.z || 0, 0) + 8);
+        grip.scale.set(gripSize, gripSize, 1);
+        grip.visible = true;
+    });
+}
+
+function clearSelectionGrips() {
+    selectedObjects = [];
+    updateSelectionGrips();
+}
+
+// Apply a live grip edit from the original mouse-down snapshot. Rebuilding from
+// the snapshot prevents accumulated floating-point drift while dragging.
+function applySelectionGripPoint(drag, worldPoint) {
+    if (!drag || !drag.object || !drag.originalGeometry) return;
+    const object = drag.object;
+    if (object.geometry) object.geometry.dispose();
+    object.geometry = drag.originalGeometry.clone();
+    object.userData = JSON.parse(JSON.stringify(drag.originalUserData || {}));
+
+    object.updateMatrixWorld(true);
+    const inverse = object.matrixWorld.clone().invert();
+    const localPoint = worldPoint.clone().applyMatrix4(inverse);
+
+    if (drag.descriptor.kind === 'circle-center') {
+        const startLocal = drag.startPoint.clone().applyMatrix4(inverse);
+        const deltaLocal = localPoint.clone().sub(startLocal);
+        object.geometry.translate(deltaLocal.x, deltaLocal.y, deltaLocal.z);
+        const center = object.userData.center;
+        if (center) {
+            center.x += worldPoint.x - drag.startPoint.x;
+            center.y += worldPoint.y - drag.startPoint.y;
+            center.z = (center.z || 0) + worldPoint.z - drag.startPoint.z;
+        }
+    } else {
+        const attribute = object.geometry.getAttribute('position');
+        const index = drag.descriptor.index;
+        if (!attribute || index < 0 || index >= attribute.count) return;
+        attribute.setXYZ(index, localPoint.x, localPoint.y, localPoint.z);
+        attribute.needsUpdate = true;
+
+        const points = object.userData.points;
+        if (Array.isArray(points) && points[index]) {
+            points[index].x = worldPoint.x;
+            points[index].y = worldPoint.y;
+            points[index].z = worldPoint.z;
+            // Keep a closed polyline closed when its first node is moved.
+            if (index === 0 && points.length > 2) {
+                const last = points[points.length - 1];
+                if (Math.hypot(last.x - drag.originalUserData.points[0].x,
+                    last.y - drag.originalUserData.points[0].y) < 1e-7) {
+                    last.x = worldPoint.x; last.y = worldPoint.y; last.z = worldPoint.z;
+                    const lastIndex = attribute.count - 1;
+                    const lastLocal = new THREE.Vector3().copy(localPoint);
+                    attribute.setXYZ(lastIndex, lastLocal.x, lastLocal.y, lastLocal.z);
+                }
+            }
+        }
+        if (object.userData.type === 'rect') object.userData.type = 'polyline';
+    }
+    object.geometry.computeBoundingBox();
+    object.geometry.computeBoundingSphere();
+    updateSelectionGrips();
 }
 
 
@@ -405,6 +600,34 @@ function createCADCommandContext() {
 
         getObjects() { return [...drawnObjects]; },
         getSelectedObjects() { return [...selectedObjects]; },
+        // Return all top-level CAD entities hit by the current pointer, in
+        // nearest-first order. Nested meshes are resolved to their owning entity.
+        // This is useful for commands such as EXPLODE where the nearest raw hit
+        // may be an unsupported overlay/entity while a supported entity is also
+        // under the pick aperture.
+        getObjectsAtPointer() {
+            if (!raycaster || !camera || !mouse) return [];
+            raycaster.setFromCamera(mouse, camera);
+            const hits = raycaster.intersectObjects(drawnObjects, true);
+            const objects = [];
+            hits.forEach(hit => {
+                let object = hit.object;
+                while (object && !drawnObjects.includes(object)) object = object.parent;
+                if (object && !objects.includes(object)) objects.push(object);
+            });
+            return objects;
+        },
+        // Backward-compatible single-object picker.
+        getObjectAtPointer() {
+            return this.getObjectsAtPointer()[0] || null;
+        },
+        // World-space tolerance corresponding to a small screen pick aperture.
+        getPickTolerance(pixels = 14) {
+            if (!camera || !renderer) return 1;
+            const width = renderer.domElement.clientWidth || 1;
+            const worldWidth = (camera.right - camera.left) / (camera.zoom || 1);
+            return Math.max(1e-6, worldWidth / width * pixels);
+        },
         getWorldBounds(object) { return getWorldBounds(object); },
         cloneObject(object) { return cloneCadObject(object); },
         translateObjects(objects, dx, dy) { return translateCadObjects(objects, dx, dy); },
@@ -454,6 +677,14 @@ function createCADCommandContext() {
             undoStack.push({ type: 'modify', before, after: this.captureObjects(objects) });
             redoStack = [];
         },
+        recordReplace(beforeObjects, afterObjects) {
+            undoStack.push({
+                type: 'replace',
+                beforeObjects: [...(beforeObjects || [])],
+                afterObjects: [...(afterObjects || [])]
+            });
+            redoStack = [];
+        },
         setSelection(objects) {
             clearSelection();
             (objects || []).forEach(object => {
@@ -462,6 +693,7 @@ function createCADCommandContext() {
                     if (object.material && object.material.color) object.material.color.setHex(0x00ffff);
                 }
             });
+            updateSelectionGrips();
         },
         clearSelection() { return clearSelection(); },
         getThree() { return THREE; },

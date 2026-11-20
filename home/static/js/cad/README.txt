@@ -70,3 +70,5 @@ VALIDATION
 The current MODIFY source files pass Node.js syntax checks and the command/tool
 registry registration check. Run the Django application and perform browser-level
 interaction tests before deploying to production.
+
+PLINE ESC commits all completed vertices. MOVE displays a translucent cyan moving preview while preserving the original until placement is confirmed.

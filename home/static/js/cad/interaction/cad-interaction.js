@@ -51,6 +51,46 @@ function onMouseMove(event) {
         return;
     }
 
+    // AUTOCAD-STYLE GRIP DRAGGING. Grip edits take priority over ordinary
+    // selection dragging and update the selected vertex/centre in real time.
+    if (selectionGripDrag) {
+        const drag = selectionGripDrag;
+        const gripPoint = getCursorWorldCoordinates().clone();
+
+        // Snap to other entities, but never to the entity whose grip is moving.
+        if (osnapOn && typeof computeOsnap === 'function' && typeof getSnapData === 'function') {
+            const snapItems = drawnObjects
+                .filter(object => object !== drag.object)
+                .map(getSnapData);
+            const snap = computeOsnap(
+                snapItems,
+                gripPoint,
+                drag.startPoint,
+                OSNAP_APERTURE_PX * worldPerPixel(),
+                osnapModes
+            );
+            if (snap) {
+                gripPoint.set(snap.x, snap.y, 0);
+                currentSnap = snap;
+                showSnapMarker(snap);
+            } else {
+                currentSnap = null;
+                hideSnapMarker();
+            }
+        }
+        if (gridSnapOn) {
+            gripPoint.x = Math.round(gripPoint.x / GRID_SPACING) * GRID_SPACING;
+            gripPoint.y = Math.round(gripPoint.y / GRID_SPACING) * GRID_SPACING;
+        }
+
+        if (gripPoint.distanceTo(drag.startPoint) > 1e-7) {
+            drag.moved = true;
+            renderer.domElement.style.cursor = 'grabbing';
+            applySelectionGripPoint(drag, gripPoint);
+        }
+        return;
+    }
+
     // DIRECT OBJECT DRAGGING
     if (objectDrag) {
 
@@ -145,6 +185,7 @@ function clearSelection() {
         obj.material.color.setHex(obj.userData.originalColor || 0xffffff);
     });
     selectedObjects = [];
+    if (typeof updateSelectionGrips === 'function') updateSelectionGrips();
 }
 
 function onCanvasClick(event) {
@@ -217,6 +258,7 @@ function onCanvasClick(event) {
                     clickedObj.material.color.setHex(0x00ffff);
                 }
             }
+            if (typeof updateSelectionGrips === 'function') updateSelectionGrips();
             setCommandPrompt(`Selected ${selectedObjects.length} object(s). Press DELETE to erase.`);
             return;
         } else if (!event.shiftKey) {
@@ -283,6 +325,34 @@ function onMouseDown(event) {
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
+    // If the pointer is on a visible grip, begin editing that node instead
+    // of starting a window-selection gesture.
+    if (selectedObjects.length && selectionGripMeshes.length) {
+        raycaster.setFromCamera(mouse, camera);
+        const gripHits = raycaster.intersectObjects(selectionGripMeshes, true);
+        if (gripHits.length) {
+            let grip = gripHits[0].object;
+            while (grip && !(grip.userData && grip.userData.isCadSelectionGrip)) grip = grip.parent;
+            const descriptor = grip && grip.userData ? grip.userData.cadGrip : null;
+            if (descriptor && descriptor.object && selectedObjects.includes(descriptor.object)) {
+                const context = CAD.createContext();
+                const cursorPoint = getCursorWorldCoordinates().clone();
+                selectionGripDrag = {
+                    object: descriptor.object,
+                    descriptor,
+                    before: context.captureObjects([descriptor.object]),
+                    originalGeometry: descriptor.object.geometry.clone(),
+                    originalUserData: JSON.parse(JSON.stringify(descriptor.object.userData || {})),
+                    startPoint: cursorPoint,
+                    moved: false
+                };
+                renderer.domElement.style.cursor = 'grabbing';
+                event.preventDefault();
+                return;
+            }
+        }
+    }
+
     boxSel.down = true;
     boxSel.active = false;
     boxSel.startX = boxSel.curX = event.clientX - rect.left;
@@ -325,6 +395,22 @@ function updateBoxSelect(event) {
 }
 
 function onMouseUp(event) {
+    // Commit one grip edit as a single undoable operation.
+    if (event.button === 0 && selectionGripDrag) {
+        const drag = selectionGripDrag;
+        selectionGripDrag = null;
+        renderer.domElement.style.cursor = '';
+        if (drag.moved) {
+            CAD.createContext().recordModify([drag.object], drag.before);
+            updateSelectionGrips();
+            notify('Grip edit applied. (Ctrl+Z to undo)');
+        }
+        if (drag.originalGeometry) drag.originalGeometry.dispose();
+        suppressNextClick = true;
+        setTimeout(() => { suppressNextClick = false; }, 0);
+        return;
+    }
+
     // Finish PAN drag; remain in PAN mode for another drag
     if (event.button === 0 && currentTool === 'pan' && isPanning) {
         isPanning = false;
@@ -416,6 +502,7 @@ function applyBoxSelection(r, crossing, additive) {
         }
     });
 
+    if (typeof updateSelectionGrips === 'function') updateSelectionGrips();
     setCommandPrompt(`${crossing ? 'Crossing' : 'Window'}: ${selectedObjects.length} object(s) selected. Press DELETE to erase.`);
 }
 
