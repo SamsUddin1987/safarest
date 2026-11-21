@@ -231,23 +231,39 @@ function getDrawPoint() {
     const pt = getCursorWorldCoordinates().clone();
     currentSnap = null;
 
-    if (currentTool === 'select') { hideSnapMarker(); return pt; }   // no snapping while selecting
+    if (currentTool === 'select') {
+        hideSnapMarker(); hideOtrackGuide();
+        // Selection mode is not a tracking command. Clear stale references so
+        // a later command cannot inherit snap points from an earlier command.
+        otrackPoints = []; otrackTool = null;
+        return pt;
+    }
+    if (otrackTool !== currentTool) { otrackPoints = []; otrackTool = currentTool; }
 
     if (osnapOn) {
         const items = drawnObjects.map(getSnapData);
-        // The polyline being drawn is not an object yet: snap to its own vertices/segments too
-        if (currentTool === 'polyline' && isDrawing && currentPoints.length > 0) {
-            items.push(snapDataFromPoints(currentPoints));
-        }
+        if (currentTool === 'polyline' && isDrawing && currentPoints.length > 0) items.push(snapDataFromPoints(currentPoints));
         const s = computeOsnap(items, pt, isDrawing ? basePoint : null, OSNAP_APERTURE_PX * worldPerPixel(), osnapModes);
         if (s) {
             currentSnap = s;
             showSnapMarker(s);
+            if (otrackOn) rememberOtrackPoint(s);
+            hideOtrackGuide();
             pt.set(s.x, s.y, 0);
             return pt;
         }
     }
     hideSnapMarker();
+
+    if (otrackOn) {
+        const tracked = computeOtrackPoint(pt);
+        if (tracked) {
+            pt.x = tracked.x; pt.y = tracked.y;
+            showOtrackGuide(tracked.anchor, pt, tracked.axis);
+            return pt;
+        }
+    }
+    hideOtrackGuide();
 
     if (gridSnapOn) {
         pt.x = Math.round(pt.x / GRID_SPACING) * GRID_SPACING;
@@ -259,6 +275,56 @@ function getDrawPoint() {
     }
     return pt;
 }
+
+// Object Snap Tracking: acquire OSNAP points and align the cursor to their X/Y axes.
+function rememberOtrackPoint(s) {
+    if (!s || !Number.isFinite(s.x) || !Number.isFinite(s.y)) return;
+    if (otrackPoints.some(p => Math.hypot(p.x-s.x,p.y-s.y) < 0.25)) return;
+    otrackPoints.push({x:s.x,y:s.y,type:s.type});
+    if (otrackPoints.length > 48) otrackPoints.shift();
+}
+function computeOtrackPoint(cursor) {
+    // OTRACK acquires a real OSNAP point, then constrains one coordinate
+    // while the cursor moves near that point's horizontal/vertical axis.
+    const aperture = 12 * worldPerPixel();
+    let best = null;
+    otrackPoints.forEach(anchor => {
+        const dx = Math.abs(cursor.x - anchor.x);
+        const dy = Math.abs(cursor.y - anchor.y);
+        // X tracking means same X coordinate -> a VERTICAL guide.
+        if (dx <= aperture && (!best || dx < best.score)) {
+            best = { x: anchor.x, y: cursor.y, anchor, axis: 'x', score: dx };
+        }
+        // Y tracking means same Y coordinate -> a HORIZONTAL guide.
+        if (dy <= aperture && (!best || dy < best.score)) {
+            best = { x: cursor.x, y: anchor.y, anchor, axis: 'y', score: dy };
+        }
+    });
+    return best;
+}
+function setupOtrackGuide(container) {
+    if (otrackGuideEl) otrackGuideEl.remove();
+    otrackGuideEl = document.createElement('div');
+    otrackGuideEl.id = 'cad-otrack-guide';
+    otrackGuideEl.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:940;display:none;';
+    const line = document.createElement('div'); line.id='cad-otrack-guide-line';
+    line.style.cssText='position:absolute;border-color:#43d6a2;border-style:dashed;border-width:0;filter:drop-shadow(0 0 2px rgba(67,214,162,.35));';
+    otrackGuideEl.append(line); container.append(otrackGuideEl);
+}
+function showOtrackGuide(anchor, point, axis) {
+    if (!otrackGuideEl) return;
+    const line = otrackGuideEl.firstChild;
+    const a = worldToScreen(anchor.x, anchor.y);
+    const p = worldToScreen(point.x, point.y);
+    // Keep guide orientation consistent with the coordinate being tracked.
+    if (axis === 'x') {
+        line.style.cssText = `position:absolute;left:${a.x}px;top:0;width:0;height:100%;border-left:1px dashed #43d6a2;`;
+    } else {
+        line.style.cssText = `position:absolute;left:0;top:${a.y}px;width:100%;height:0;border-top:1px dashed #43d6a2;`;
+    }
+    otrackGuideEl.style.display = 'block';
+}
+function hideOtrackGuide(){if(otrackGuideEl)otrackGuideEl.style.display='none';}
 
 // --- snap marker (yellow AutoCAD-style glyph + tooltip) ---
 function setupSnapUI(container) {
@@ -319,6 +385,7 @@ function setupStatusBar(container) {
         return b;
     };
     bar.appendChild(mk('cad-st-osnap', 'OSNAP', toggleOsnap));
+    bar.appendChild(mk('cad-st-otrack', 'OTRACK', toggleOtrack));
     bar.appendChild(mk('cad-st-osnap-cfg', '▾', () => {
         osnapMenuEl.style.display = osnapMenuEl.style.display === 'block' ? 'none' : 'block';
     }));
@@ -348,6 +415,7 @@ function setupStatusBar(container) {
         osnapMenuEl.appendChild(row);
     });
     container.appendChild(osnapMenuEl);
+    setupOtrackGuide(container);
     updateStatusBar();
 }
 
@@ -360,6 +428,7 @@ function updateStatusBar() {
         if (extra) b.title = extra;
     };
     set('cad-st-osnap', osnapOn, 'Object Snap (F3)');
+    set('cad-st-otrack', otrackOn, 'Object Snap Tracking (F11)');
     set('cad-st-ortho', orthoOn, 'Ortho Mode (F8)');
     set('cad-st-gsnap', gridSnapOn, 'Grid Snap (F9)');
     set('cad-st-grid', gridHelper ? gridHelper.visible : true, 'Grid Display (F7)');
@@ -370,6 +439,14 @@ function toggleOsnap() {
     if (!osnapOn) hideSnapMarker();
     updateStatusBar();
     notify(`<Object Snap ${osnapOn ? 'on' : 'off'}>`);
+}
+function toggleOtrack(force) {
+    otrackOn = typeof force === 'boolean' ? force : !otrackOn;
+    otrackPoints = [];
+    hideOtrackGuide();
+    updateStatusBar();
+    notify(`<Object Snap Tracking ${otrackOn ? 'on' : 'off'}>`);
+    return otrackOn;
 }
 function toggleOrtho() {
     orthoOn = !orthoOn;
@@ -383,3 +460,6 @@ function toggleGridSnap() {
 }
 
 // ==========================================
+
+// Explicit public toggle for the workspace menu.
+window.toggleOtrack = toggleOtrack;

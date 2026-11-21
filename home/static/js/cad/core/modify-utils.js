@@ -70,16 +70,13 @@
 
         (objects || []).forEach(object => {
             scene.remove(object);
-
-            if (object.geometry) object.geometry.dispose();
-
-            if (object.material) {
-                if (Array.isArray(object.material)) {
-                    object.material.forEach(material => material.dispose());
-                } else {
-                    object.material.dispose();
+            object.traverse(child => {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) child.material.forEach(material => { if (material.map) material.map.dispose(); material.dispose(); });
+                    else { if (child.material.map) child.material.map.dispose(); child.material.dispose(); }
                 }
-            }
+            });
         });
     }
 

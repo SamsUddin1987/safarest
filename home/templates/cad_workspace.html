@@ -493,6 +493,9 @@
                         <button class="cad-menu-item" onclick="window.toggleOrtho()">
                             Ortho Mode
                         </button>
+                        <button class="cad-menu-item" onclick="window.toggleOtrack()">
+                            Object Snap Tracking (F11)
+                        </button>
                         <button class="cad-menu-item" onclick="window.toggleGridSnap()">
                             Grid Snap
                         </button>
@@ -521,17 +524,12 @@
                 <div class="cad-menu">
                     <button class="cad-menu-trigger" type="button">Format</button>
                     <div class="cad-menu-panel">
-                        <button class="cad-menu-item" disabled>Layer Manager</button>
-                        <button class="cad-menu-item" disabled>Layer Properties</button>
+                        <button class="cad-menu-item" onclick="window.CAD.Dimension.openLayerManager()">Layer Manager / Properties</button>
                         <hr>
-                        <button class="cad-menu-item" disabled>Text Style</button>
-                        <button class="cad-menu-item" disabled>Dimension Style</button>
-                        <button class="cad-menu-item" disabled>Linetype</button>
-                        <button class="cad-menu-item" disabled>Lineweight</button>
-                        <button class="cad-menu-item" disabled>Color</button>
+                        <button class="cad-menu-item" onclick="window.CAD.Dimension.openStyleManager()">Dimension Style Manager</button>
+                        <button class="cad-menu-item" onclick="window.CAD.Dimension.openUnitsManager()">Dimension Units</button>
                         <hr>
-                        <button class="cad-menu-item" disabled>Drawing Units</button>
-                        <button class="cad-menu-item" disabled>Drawing Limits</button>
+                        <button class="cad-menu-item" onclick="window.CAD.Dimension.openStyleManager()">Dimension colours, linetype &amp; lineweight</button>
                     </div>
                 </div>
 
@@ -539,14 +537,20 @@
                 <div class="cad-menu">
                     <button class="cad-menu-trigger" type="button">Dimension</button>
                     <div class="cad-menu-panel">
-                        <button class="cad-menu-item" disabled>Linear</button>
-                        <button class="cad-menu-item" disabled>Aligned</button>
-                        <button class="cad-menu-item" disabled>Angular</button>
-                        <button class="cad-menu-item" disabled>Radius</button>
-                        <button class="cad-menu-item" disabled>Diameter</button>
-                        <button class="cad-menu-item" disabled>Ordinate</button>
+                        <button class="cad-menu-item" onclick="window.CAD.executeCommand('DIMLINEAR')">Linear (DLI)</button>
+                        <button class="cad-menu-item" onclick="window.CAD.executeCommand('DIMALIGNED')">Aligned (DAL)</button>
+                        <button class="cad-menu-item" onclick="window.CAD.executeCommand('DIMANGULAR')">Angular (DAN)</button>
+                        <button class="cad-menu-item" onclick="window.CAD.executeCommand('DIMRADIUS')">Radius (DRA)</button>
+                        <button class="cad-menu-item" onclick="window.CAD.executeCommand('DIMDIAMETER')">Diameter (DDI)</button>
+                        <button class="cad-menu-item" onclick="window.CAD.executeCommand('DIMORDINATE')">Ordinate (DOR)</button>
+                        <button class="cad-menu-item" onclick="window.CAD.executeCommand('DIMCENTER')">Center Mark (DCE)</button>
                         <hr>
-                        <button class="cad-menu-item" disabled>Dimension Style</button>
+                        <button class="cad-menu-item" onclick="window.CAD.executeCommand('DIMCONTINUE')">Continue (DCO)</button>
+                        <button class="cad-menu-item" onclick="window.CAD.executeCommand('DIMBASELINE')">Baseline (DBA)</button>
+                        <button class="cad-menu-item" onclick="window.CAD.executeCommand('DIMEDIT')">Edit Dimension Text (DED)</button>
+                        <button class="cad-menu-item" onclick="window.CAD.executeCommand('DIMUPDATE')">Update Dimensions (DUP)</button>
+                        <hr>
+                        <button class="cad-menu-item" onclick="window.CAD.executeCommand('DIMSTYLE')">Dimension Style Manager (D)</button>
                     </div>
                 </div>
 
@@ -667,6 +671,19 @@
 <script src="{% static 'js/cad/commands/modify/join.js' %}"></script>
 <script src="{% static 'js/cad/commands/modify/explode.js' %}"></script>
 
+<!-- DIMENSION ENGINE & STYLES -->
+<script src="{% static 'js/cad/core/cad-dimension-engine.js' %}"></script>
+<script src="{% static 'js/cad/commands/dimension/dimension-tools-common.js' %}"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-linear.js' %}"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-aligned.js' %}"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-angular.js' %}"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-radius.js' %}"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-diameter.js' %}"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-ordinate.js' %}"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-center.js' %}"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-continue-baseline.js' %}"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-style-commands.js' %}"></script>
+
 <!-- INTERACTION -->
 <script src="{% static 'js/cad/interaction/cad-input.js' %}"></script>
 <script src="{% static 'js/cad/interaction/cad-interaction.js' %}"></script>
@@ -729,6 +746,18 @@ document.addEventListener("DOMContentLoaded", function() {
             currentSubmenu.classList.toggle('open');
         });
     });
+
+    // ESC closes an open menu/submenu first. A second ESC can cancel the active CAD command.
+    window.addEventListener('keydown', function(event) {
+        if (event.key !== 'Escape') return;
+        if (document.getElementById('cad-dimension-dialog')) return; // dialog owns its own ESC handler
+        const opened = document.querySelectorAll('.cad-menu.open, .cad-menu-sub.open');
+        if (opened.length) {
+            opened.forEach(function(menu) { menu.classList.remove('open'); });
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        }
+    }, true);
 
     // Close menus when clicking outside
     document.addEventListener('click', function(event) {

@@ -25,6 +25,7 @@ function onKeyDown(event) {
     if (event.key === 'F7') { event.preventDefault(); toggleGrid(); return; }
     if (event.key === 'F8') { event.preventDefault(); toggleOrtho(); return; }
     if (event.key === 'F9') { event.preventDefault(); toggleGridSnap(); return; }
+    if (event.key === 'F11') { event.preventDefault(); toggleOtrack(); return; }
 
     // Ctrl+Z = UNDO, Ctrl+Y / Ctrl+Shift+Z = REDO, Ctrl+A = select all
     if (hasCtrl) {

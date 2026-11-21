@@ -1,0 +1,1 @@
+(function(g){'use strict';g.CAD.DimensionTools.registerLinearTool('dimlinear','DIMLINEAR','DLI',false);})(window);

@@ -137,30 +137,24 @@ function updateActiveBufferPreview(pt) {
 }
 
 function clearActiveBuffer() {
-
     if (!activeBufferObj) return;
+    if (scene) scene.remove(activeBufferObj);
 
-    scene.remove(activeBufferObj);
-
-    if (activeBufferObj.geometry) {
-        activeBufferObj.geometry.dispose();
-    }
-
-    if (activeBufferObj.material) {
-
-        if (Array.isArray(activeBufferObj.material)) {
-
-            activeBufferObj.material.forEach(material => {
-                if (material) material.dispose();
-            });
-
-        } else {
-
-            activeBufferObj.material.dispose();
-
+    // Dimension previews contain nested text sprites and CanvasTextures.
+    // Dispose all nested GPU resources when replacing a live preview.
+    const disposedMaterials = new Set();
+    activeBufferObj.traverse(child => {
+        if (child.geometry && typeof child.geometry.dispose === 'function') {
+            child.geometry.dispose();
         }
-    }
-
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        materials.forEach(material => {
+            if (!material || disposedMaterials.has(material)) return;
+            disposedMaterials.add(material);
+            if (material.map && typeof material.map.dispose === 'function') material.map.dispose();
+            if (typeof material.dispose === 'function') material.dispose();
+        });
+    });
     activeBufferObj = null;
 }
 

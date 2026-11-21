@@ -57,11 +57,29 @@ function translateCadObjects(objects, dx, dy) {
             obj.geometry.translate(dx, dy, 0);
             obj.geometry.computeBoundingSphere();
         }
+        if (obj.traverse) {
+            obj.traverse(child => {
+                if (child !== obj && child.geometry) {
+                    child.geometry.translate(dx, dy, 0);
+                    child.geometry.computeBoundingSphere();
+                }
+                if (child !== obj && child.isSprite) {
+                    child.position.x += dx; child.position.y += dy;
+                }
+            });
+        }
         if (obj.userData && obj.userData.center) {
             obj.userData.center.x += dx; obj.userData.center.y += dy;
         }
         if (obj.userData && Array.isArray(obj.userData.points)) {
             obj.userData.points.forEach(point => { point.x += dx; point.y += dy; });
+        }
+        if (obj.userData && obj.userData.dimensionData) {
+            const d = obj.userData.dimensionData;
+            ['p1','p2','location','vertex','ray1','ray2','arcPoint','center','point'].forEach(key => {
+                const value = d[key];
+                if (Array.isArray(value) && value.length >= 2) { value[0] += dx; value[1] += dy; }
+            });
         }
         if (obj.isSprite) { obj.position.x += dx; obj.position.y += dy; }
     });
@@ -79,12 +97,12 @@ function handleToolClick(pt) {
         activeDrawTool &&
         typeof activeDrawTool.onClick === 'function'
     ) {
-
-        activeDrawTool.onClick(
-            pt,
-            CAD.createContext()
-        );
-
+        try {
+            activeDrawTool.onClick(pt, CAD.createContext());
+        } catch (error) {
+            console.error(`[SAFAR EDGE CAD] ${currentTool} click failed:`, error);
+            setCommandPrompt(`${String(currentTool).toUpperCase()} error: ${error.message}`);
+        }
         return;
     }
 

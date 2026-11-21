@@ -141,7 +141,7 @@ function onMouseMove(event) {
         raycaster.setFromCamera(mouse, camera);
 
         const intersects =
-            raycaster.intersectObjects(drawnObjects, true);
+            raycaster.intersectObjects(drawnObjects.filter(o => !(o.userData && o.userData.layerLocked)), true);
 
         if (intersects.length > 0) {
 
@@ -163,7 +163,12 @@ function onMouseMove(event) {
 
     const activeTool = CAD.getTool(currentTool);
     if (activeTool && typeof activeTool.onPreview === 'function') {
-        activeTool.onPreview(pt, CAD.createContext());
+        try {
+            activeTool.onPreview(pt, CAD.createContext());
+        } catch (error) {
+            console.error(`[SAFAR EDGE CAD] ${currentTool} live preview failed:`, error);
+            setCommandPrompt(`${String(currentTool).toUpperCase()} preview error: ${error.message}`);
+        }
         return;
     }
 
@@ -236,26 +241,32 @@ function onCanvasClick(event) {
     // Multi-Selection Logic in Select Mode
     if (currentTool === 'select') {
         raycaster.setFromCamera(mouse, camera);
-        const intersects = raycaster.intersectObjects(drawnObjects, true);
+        const intersects = raycaster.intersectObjects(drawnObjects.filter(o => !(o.userData && o.userData.layerLocked)), true);
 
         if (intersects.length > 0) {
-            const clickedObj = intersects[0].object;
+            let clickedObj = intersects[0].object;
+            // Dimension labels and extension lines are child objects. Resolve
+            // them to the owning top-level CAD entity before selection.
+            while (clickedObj && !drawnObjects.includes(clickedObj)) {
+                clickedObj = clickedObj.parent;
+            }
+            if (!clickedObj) return;
 
             if (event.shiftKey) {
                 // Shift + Click to toggle individual items
                 if (selectedObjects.includes(clickedObj)) {
                     selectedObjects = selectedObjects.filter(o => o !== clickedObj);
-                    clickedObj.material.color.setHex(clickedObj.userData.originalColor || 0xffffff);
+                    if (clickedObj.material && clickedObj.material.color) clickedObj.material.color.setHex(clickedObj.userData.originalColor || 0xffffff);
                 } else {
                     selectedObjects.push(clickedObj);
-                    clickedObj.material.color.setHex(0x00ffff);
+                    if (clickedObj.material && clickedObj.material.color) clickedObj.material.color.setHex(0x00ffff);
                 }
             } else {
                 // Regular Click selects multiple or replaces selection
                 if (!selectedObjects.includes(clickedObj)) {
                     clearSelection();
                     selectedObjects.push(clickedObj);
-                    clickedObj.material.color.setHex(0x00ffff);
+                    if (clickedObj.material && clickedObj.material.color) clickedObj.material.color.setHex(0x00ffff);
                 }
             }
             if (typeof updateSelectionGrips === 'function') updateSelectionGrips();

@@ -14,23 +14,19 @@
     let previewDelta = { x: 0, y: 0 };
 
     function cloneCadObject(source) {
-        const copy = source.clone();
-
-        if (source.geometry) copy.geometry = source.geometry.clone();
-        if (source.material) {
-            copy.material = Array.isArray(source.material)
-                ? source.material.map(material => material.clone())
-                : source.material.clone();
-        }
-
+        const copy = source.clone(true);
+        copy.traverse(child => {
+            if (child.geometry) child.geometry = child.geometry.clone();
+            if (child.material) {
+                child.material = Array.isArray(child.material)
+                    ? child.material.map(material => material.clone())
+                    : child.material.clone();
+            }
+        });
         copy.userData = JSON.parse(JSON.stringify(source.userData || {}));
-
         if (copy.material && copy.material.color) {
-            copy.material.color.setHex(
-                copy.userData.originalColor || 0xffffff
-            );
+            copy.material.color.setHex(copy.userData.originalColor || 0xffffff);
         }
-
         return copy;
     }
 

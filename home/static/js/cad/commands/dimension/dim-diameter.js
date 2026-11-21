@@ -1,0 +1,1 @@
+(function(g){'use strict';g.CAD.DimensionTools.registerRadialTool('dimdiameter','DIMDIAMETER','DDI',true);})(window);

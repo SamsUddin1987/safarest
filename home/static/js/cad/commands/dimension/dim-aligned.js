@@ -1,0 +1,1 @@
+(function(g){'use strict';g.CAD.DimensionTools.registerLinearTool('dimaligned','DIMALIGNED','DAL',true);})(window);

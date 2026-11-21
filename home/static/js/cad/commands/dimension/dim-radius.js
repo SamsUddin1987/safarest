@@ -1,0 +1,1 @@
+(function(g){'use strict';g.CAD.DimensionTools.registerRadialTool('dimradius','DIMRADIUS','DRA',false);})(window);

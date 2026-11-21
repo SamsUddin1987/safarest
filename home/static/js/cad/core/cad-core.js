@@ -63,7 +63,8 @@ let panLastX = 0, panLastY = 0;
 let lastMiddleDown = 0;        // for middle double-click = Zoom Extents
 
 // Drafting aids (AutoCAD status bar: OSNAP F3, GRID F7, ORTHO F8, SNAP F9)
-let osnapOn = true, orthoOn = false, gridSnapOn = false;
+let osnapOn = true, orthoOn = false, gridSnapOn = false, otrackOn = false;
+let otrackPoints = [], otrackTool = null, otrackGuideEl = null;
 const GRID_SPACING = 10;       // matches GridHelper(1000, 100)
 const OSNAP_APERTURE_PX = 14;  // pick radius around the cursor, in screen pixels
 const osnapModes = { endpoint: true, midpoint: true, center: true, node: true, quadrant: true,
@@ -217,7 +218,8 @@ function getSelectionGripDescriptors(object) {
     object.updateMatrixWorld(true);
     const data = object.userData || {};
     const descriptors = [];
-    if (data.type === 'solid') return descriptors;
+    // Dimensions are editable through DIMEDIT/DIMSTYLE rather than vertex grips.
+    if (data.type === 'dimension' || data.type === 'solid') return descriptors;
 
     // Circle centre grip: dragging it translates the complete circle.
     if (data.type === 'circle' && data.center) {
@@ -608,7 +610,7 @@ function createCADCommandContext() {
         getObjectsAtPointer() {
             if (!raycaster || !camera || !mouse) return [];
             raycaster.setFromCamera(mouse, camera);
-            const hits = raycaster.intersectObjects(drawnObjects, true);
+            const hits = raycaster.intersectObjects(drawnObjects.filter(o => !(o.userData && o.userData.layerLocked)), true);
             const objects = [];
             hits.forEach(hit => {
                 let object = hit.object;
@@ -633,19 +635,38 @@ function createCADCommandContext() {
         translateObjects(objects, dx, dy) { return translateCadObjects(objects, dx, dy); },
         applyMatrix(objects, matrix) {
             (objects || []).forEach(object => {
+                const applyChild = child => {
+                    if (child !== object && child.geometry) {
+                        child.geometry.applyMatrix4(matrix);
+                        child.geometry.computeBoundingSphere();
+                    }
+                    if (child !== object && child.isSprite) child.position.applyMatrix4(matrix);
+                };
                 if (object.geometry) {
                     object.geometry.applyMatrix4(matrix);
                     object.geometry.computeBoundingSphere();
                 }
                 if (object.isSprite) object.position.applyMatrix4(matrix);
+                if (object.traverse) object.traverse(applyChild);
                 const data = object.userData || {};
                 const transformPoint = point => {
                     const v = new THREE.Vector3(point.x, point.y, point.z || 0).applyMatrix4(matrix);
                     point.x = v.x; point.y = v.y; if ('z' in point) point.z = v.z;
                 };
+                const transformArray = arr => {
+                    if (!Array.isArray(arr) || arr.length < 2) return;
+                    const v = new THREE.Vector3(arr[0], arr[1], arr[2] || 0).applyMatrix4(matrix);
+                    arr[0] = v.x; arr[1] = v.y; if (arr.length > 2) arr[2] = v.z;
+                };
                 if (data.center) transformPoint(data.center);
                 if (Array.isArray(data.points)) data.points.forEach(transformPoint);
-                if (data.type === 'circle' && data.radius !== undefined) {
+                if (data.dimensionData) {
+                    ['p1','p2','location','vertex','ray1','ray2','arcPoint','center','point'].forEach(k => transformArray(data.dimensionData[k]));
+                    const sx = new THREE.Vector3(1, 0, 0).applyMatrix4(matrix).length();
+                    const sy = new THREE.Vector3(0, 1, 0).applyMatrix4(matrix).length();
+                    if (data.dimensionData.radius !== undefined) data.dimensionData.radius *= (sx + sy) / 2;
+                }
+                if ((data.type === 'circle' || data.type === 'dimension') && data.radius !== undefined) {
                     const sx = new THREE.Vector3(1, 0, 0).applyMatrix4(matrix).length();
                     const sy = new THREE.Vector3(0, 1, 0).applyMatrix4(matrix).length();
                     data.radius *= (sx + sy) / 2;
@@ -653,24 +674,46 @@ function createCADCommandContext() {
             });
         },
         captureObjects(objects) {
-            return (objects || []).map(object => ({
-                object,
-                geometry: object.geometry ? object.geometry.clone() : null,
-                position: object.position.clone(),
-                quaternion: object.quaternion.clone(),
-                scale: object.scale.clone(),
-                userData: JSON.parse(JSON.stringify(object.userData || {}))
-            }));
+            return (objects || []).map(object => {
+                const children = [];
+                if (object.traverse) object.traverse(child => {
+                    if (child === object) return;
+                    children.push({
+                        child,
+                        geometry: child.geometry ? child.geometry.clone() : null,
+                        position: child.position.clone(),
+                        quaternion: child.quaternion.clone(),
+                        scale: child.scale.clone()
+                    });
+                });
+                return {
+                    object,
+                    geometry: object.geometry ? object.geometry.clone() : null,
+                    position: object.position.clone(),
+                    quaternion: object.quaternion.clone(),
+                    scale: object.scale.clone(),
+                    userData: JSON.parse(JSON.stringify(object.userData || {})),
+                    children
+                };
+            });
         },
         restoreObjects(snapshots) {
             (snapshots || []).forEach(snapshot => {
                 const object = snapshot.object;
-                if (object.geometry && object.geometry !== snapshot.geometry) object.geometry.dispose();
+                if (object.geometry) object.geometry.dispose();
                 object.geometry = snapshot.geometry ? snapshot.geometry.clone() : object.geometry;
                 object.position.copy(snapshot.position);
                 object.quaternion.copy(snapshot.quaternion);
                 object.scale.copy(snapshot.scale);
                 object.userData = JSON.parse(JSON.stringify(snapshot.userData || {}));
+                (snapshot.children || []).forEach(childSnapshot => {
+                    const child = childSnapshot.child;
+                    if (child.geometry) child.geometry.dispose();
+                    child.geometry = childSnapshot.geometry ? childSnapshot.geometry.clone() : child.geometry;
+                    child.position.copy(childSnapshot.position);
+                    child.quaternion.copy(childSnapshot.quaternion);
+                    child.scale.copy(childSnapshot.scale);
+                });
             });
         },
         recordModify(objects, before) {

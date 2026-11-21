@@ -1,6 +1,14 @@
 // 4D. UNDO / REDO  &  ZOOM EXTENTS
 // ==========================================
 function addEntity(obj, record = true) {
+    if (obj) {
+        obj.userData = obj.userData || {};
+        if (!obj.userData.layer) obj.userData.layer = (window.CAD && CAD.Dimension) ? CAD.Dimension.getCurrentLayer() : '0';
+        // New native drawing entities use ByLayer unless a command explicitly
+        // requests an explicit colour (for example, imported DXF entities).
+        if (!obj.userData.colorMode && obj.userData.type !== 'dimension') obj.userData.colorMode = 'ByLayer';
+        if (window.CAD && CAD.Dimension && CAD.Dimension.applyLayerState) CAD.Dimension.applyLayerState(obj);
+    }
     scene.add(obj);
     drawnObjects.push(obj);
     if (record) {
