@@ -702,43 +702,90 @@ function setupStatusBar(container) {
 
     const bar = document.createElement('div');
     bar.id = 'cad-status-bar';
-    bar.style.cssText =
-        'position:absolute;right:15px;bottom:62px;display:flex;gap:4px;z-index:1000;';
+
+    // Compact controls inside the EXISTING bottom tab ribbon.
+    bar.style.cssText = `
+        position:static;
+        display:flex;
+        align-items:center;
+        gap:3px;
+        width:max-content;
+        height:28px;
+        flex:0 0 auto;
+        margin-left:8px;
+        padding:0;
+        background:transparent;
+        border:none;
+        box-sizing:border-box;
+    `;
 
     const mk = (id, label, handler) => {
         const button = document.createElement('button');
+
         button.id = id;
         button.type = 'button';
         button.textContent = label;
-        button.style.cssText =
-            `font:11px Consolas,'Courier New',monospace;padding:4px 8px;cursor:pointer;` +
-            'border:1px solid #444;border-radius:3px;background:#2a2a2a;color:#ccc;';
-        button.addEventListener('mousedown', event => event.preventDefault());
+
+        button.style.cssText = `
+            height:26px;
+            padding:0 7px;
+            margin:0;
+            font:10px Consolas,'Courier New',monospace;
+            line-height:24px;
+            white-space:nowrap;
+            cursor:pointer;
+            border:1px solid #444;
+            border-radius:3px;
+            background:#2a2a2a;
+            color:#ccc;
+            box-sizing:border-box;
+        `;
+
+        button.addEventListener('mousedown', event => {
+            event.preventDefault();
+        });
+
         button.addEventListener('click', event => {
             event.stopPropagation();
             handler();
         });
+
         return button;
     };
 
     const osnapButton = mk('cad-st-osnap', 'OSNAP', toggleOsnap);
-    osnapButton.title = 'Left-click: toggle Object Snap | Right-click: Settings';
+
+    osnapButton.title =
+        'Left-click: toggle Object Snap | Right-click: Settings';
+
     osnapButton.addEventListener('contextmenu', event => {
         event.preventDefault();
         event.stopPropagation();
+
         showOsnapContextMenu(event.clientX, event.clientY);
     });
+
     bar.appendChild(osnapButton);
 
     bar.appendChild(mk('cad-st-otrack', 'OTRACK', toggleOtrack));
     bar.appendChild(mk('cad-st-ortho', 'ORTHO', toggleOrtho));
     bar.appendChild(mk('cad-st-gsnap', 'SNAP', toggleGridSnap));
     bar.appendChild(mk('cad-st-grid', 'GRID', toggleGrid));
-    container.appendChild(bar);
+
+    // IMPORTANT: Append to the existing tab ribbon, after Spreadsheet.
+    const tabBar = document.querySelector('.app-tab-bar');
+
+    if (tabBar) {
+        tabBar.appendChild(bar);
+    } else {
+        console.error('Existing .app-tab-bar was not found.');
+        return;
+    }
 
     setupOsnapContextMenu(container);
     setupOsnapSettingsDialog(container);
     setupOtrackGuide(container);
+
     updateStatusBar();
 }
 

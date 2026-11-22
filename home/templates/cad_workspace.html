@@ -1,6 +1,8 @@
 {% extends 'base.html' %}
 {% load static %}
 
+{% block body_class %}workspace-fullscreen{% endblock %}
+
 {% block title %}{{ tool_title }} | SafarEdge{% endblock %}
 
 {% block extra_css %}
@@ -8,13 +10,16 @@
     .app-workspace {
         display: flex;
         flex-direction: column;
-        height: calc(100vh - 20px);
+        height: 100vh;
+        height: 100dvh;
         width: 100%;
         position: relative;
+        overflow: hidden;
     }
 
     .app-content-area {
         flex: 1;
+        min-height: 0;
         position: relative;
         overflow: hidden;
         background-color: #121212;
@@ -84,7 +89,7 @@
 
     .cad-command-bar {
         position: absolute;
-        bottom: 15px;
+        bottom: 0;
         left: 15px;
         right: 15px;
         background: rgba(20, 20, 20, 0.95);
@@ -99,13 +104,19 @@
     }
 
     .app-tab-bar {
-        display: flex;
-        align-items: center;
-        background-color: #f3f4f6;
-        border-top: 1px solid #d1d5db;
-        height: 40px;
-        padding: 0 10px;
-        z-index: 1000;
+        display:flex;
+        flex-direction:row;
+        align-items:center;
+        gap:4px;
+        width:100%;
+        height:40px;
+        min-height:40px;
+        padding:0 10px;
+        box-sizing:border-box;
+        background-color:#f3f4f6;
+        border-top:1px solid #d1d5db;
+        overflow:hidden;
+        z-index:1000;
     }
 
     .app-tab {
@@ -820,6 +831,13 @@ document.addEventListener("DOMContentLoaded", function() {
 
 function switchAppTab(tab) {
 
+    const cadStatusBar = document.getElementById('cad-status-bar');
+
+    if (cadStatusBar) {
+        cadStatusBar.style.display =
+            tab === 'cad' ? 'flex' : 'none';
+    }
+
     document.querySelectorAll('.app-pane').forEach(el =>
         el.classList.remove('active')
     );
@@ -843,6 +861,8 @@ function switchAppTab(tab) {
         }
     }
 }
+
+
 </script>
 
 {% endblock %}

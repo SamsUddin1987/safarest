@@ -1,6 +1,8 @@
 {% extends 'base.html' %}
 {% load static %}
 
+{% block body_class %}workspace-fullscreen{% endblock %}
+
 {% block title %}{{ tool_title|default:"CAD & Sheet" }} | SafarEdge{% endblock %}
 
 {% block extra_css %}
@@ -8,7 +10,7 @@
     .app-workspace {
         display: flex;
         flex-direction: column;
-        height: calc(100vh - 20px);
+        height: 100dvh;
         width: 100%;
         position: relative;
     }
@@ -97,7 +99,7 @@
     /* Step 2: AutoCAD Command Bar CSS */
     .cad-command-bar {
         position: absolute;
-        bottom: 15px;
+        bottom: 0;
         left: 15px;
         right: 15px;
         background: rgba(20, 20, 20, 0.95);
