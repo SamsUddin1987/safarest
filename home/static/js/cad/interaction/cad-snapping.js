@@ -226,105 +226,429 @@ function worldToScreen(x, y) {
     };
 }
 
-// The point a drawing command should use: OSNAP > (GRID SNAP, ORTHO) > raw cursor
+// The point a drawing command should use: OSNAP > OTRACK > GRID/ORTHO > raw cursor.
 function getDrawPoint() {
     const pt = getCursorWorldCoordinates().clone();
     currentSnap = null;
 
     if (currentTool === 'select') {
-        hideSnapMarker(); hideOtrackGuide();
-        // Selection mode is not a tracking command. Clear stale references so
-        // a later command cannot inherit snap points from an earlier command.
-        otrackPoints = []; otrackTool = null;
+        hideSnapMarker();
+        hideOtrackGuide();
+        // Grip dragging has its own OTRACK path in cad-interaction.js.
+        // In ordinary SELECT mode, clear old acquired points.
+        const gripIsActive = typeof selectionGripDrag !== 'undefined' && !!selectionGripDrag;
+        if (!gripIsActive) {
+            otrackPoints = [];
+            otrackTool = null;
+        }
         return pt;
     }
-    if (otrackTool !== currentTool) { otrackPoints = []; otrackTool = currentTool; }
 
+    if (otrackTool !== currentTool) {
+        otrackPoints = [];
+        otrackTool = currentTool;
+    }
+
+    let snapItems = [];
     if (osnapOn) {
-        const items = drawnObjects.map(getSnapData);
-        if (currentTool === 'polyline' && isDrawing && currentPoints.length > 0) items.push(snapDataFromPoints(currentPoints));
-        const s = computeOsnap(items, pt, isDrawing ? basePoint : null, OSNAP_APERTURE_PX * worldPerPixel(), osnapModes);
-        if (s) {
-            currentSnap = s;
-            showSnapMarker(s);
-            if (otrackOn) rememberOtrackPoint(s);
+        snapItems = drawnObjects.map(getSnapData);
+        if (currentTool === 'polyline' && isDrawing && currentPoints.length > 0) {
+            snapItems.push(snapDataFromPoints(currentPoints));
+        }
+
+        const snap = computeOsnap(
+            snapItems,
+            pt,
+            isDrawing ? basePoint : null,
+            OSNAP_APERTURE_PX * worldPerPixel(),
+            osnapModes
+        );
+
+        if (snap) {
+            currentSnap = snap;
+            showSnapMarker(snap);
+            if (otrackOn) rememberOtrackPoint(snap, snapItems);
             hideOtrackGuide();
-            pt.set(s.x, s.y, 0);
+            pt.set(snap.x, snap.y, 0);
             return pt;
         }
     }
+
     hideSnapMarker();
 
     if (otrackOn) {
         const tracked = computeOtrackPoint(pt);
         if (tracked) {
-            pt.x = tracked.x; pt.y = tracked.y;
-            showOtrackGuide(tracked.anchor, pt, tracked.axis);
+            pt.set(tracked.x, tracked.y, 0);
+            showOtrackGuide(tracked.anchor, pt, tracked.axis, tracked.direction, tracked);
             return pt;
         }
     }
+
     hideOtrackGuide();
 
     if (gridSnapOn) {
         pt.x = Math.round(pt.x / GRID_SPACING) * GRID_SPACING;
         pt.y = Math.round(pt.y / GRID_SPACING) * GRID_SPACING;
     }
-    if (orthoOn && isDrawing && basePoint && (currentTool === 'line' || currentTool === 'polyline')) {
-        if (Math.abs(pt.x - basePoint.x) >= Math.abs(pt.y - basePoint.y)) pt.y = basePoint.y;
-        else pt.x = basePoint.x;
+
+    if (orthoOn && isDrawing && basePoint &&
+        (currentTool === 'line' || currentTool === 'polyline')) {
+        if (Math.abs(pt.x - basePoint.x) >= Math.abs(pt.y - basePoint.y)) {
+            pt.y = basePoint.y;
+        } else {
+            pt.x = basePoint.x;
+        }
     }
+
     return pt;
 }
 
-// Object Snap Tracking: acquire OSNAP points and align the cursor to their X/Y axes.
-function rememberOtrackPoint(s) {
+// Acquire an OSNAP point and, where it lies on a straight entity segment,
+// remember that segment's direction for arbitrary-angle object tracking.
+function rememberOtrackPoint(s, items = []) {
     if (!s || !Number.isFinite(s.x) || !Number.isFinite(s.y)) return;
-    if (otrackPoints.some(p => Math.hypot(p.x-s.x,p.y-s.y) < 0.25)) return;
-    otrackPoints.push({x:s.x,y:s.y,type:s.type});
-    if (otrackPoints.length > 48) otrackPoints.shift();
+
+    // OSNAP modes remain available for normal placement, but only deliberate
+    // geometric reference points should seed OTRACK. Midpoint, perpendicular
+    // and nearest are transient cursor solutions and create clutter when
+    // acquired continuously while the pointer moves.
+    const trackableSnapTypes = new Set([
+        'endpoint', 'intersection', 'node', 'center', 'quadrant'
+    ]);
+    if (!trackableSnapTypes.has(s.type)) return;
+
+    let anchor = otrackPoints.find(p => Math.hypot(p.x - s.x, p.y - s.y) < 0.25);
+    if (!anchor) {
+        anchor = { x: s.x, y: s.y, type: s.type, directions: [] };
+        otrackPoints.push(anchor);
+    }
+    if (!Array.isArray(anchor.directions)) anchor.directions = [];
+
+    const tolerance = Math.max(1e-7, 3 * worldPerPixel());
+    (items || []).forEach(item => {
+        (item.segs || []).forEach(segment => {
+            const a = segment[0], b = segment[1];
+            if (!a || !b) return;
+
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const length = Math.hypot(dx, dy);
+            if (length < 1e-10) return;
+
+            const ux = dx / length;
+            const uy = dy / length;
+            const along = (s.x - a.x) * ux + (s.y - a.y) * uy;
+            if (along < -tolerance || along > length + tolerance) return;
+
+            const projectedX = a.x + ux * along;
+            const projectedY = a.y + uy * along;
+            if (Math.hypot(s.x - projectedX, s.y - projectedY) > tolerance) return;
+
+            // Direction is undirected; either end of the segment can be followed.
+            const duplicate = anchor.directions.some(d =>
+                Math.abs(Math.abs(d.x * ux + d.y * uy) - 1) < 1e-5
+            );
+            if (!duplicate) anchor.directions.push({ x: ux, y: uy });
+        });
+
+        // For a circle/arc intersection or perimeter snap, acquire the local
+        // tangent as another useful OTRACK reference direction.
+        if (item.circle) {
+            const circle = item.circle;
+            const rx = s.x - circle.cx;
+            const ry = s.y - circle.cy;
+            const radius = Math.hypot(rx, ry);
+            const tolerance = Math.max(1e-7, 3 * worldPerPixel());
+            if (radius > 1e-10 && Math.abs(radius - circle.r) <= tolerance) {
+                const tx = -ry / radius;
+                const ty = rx / radius;
+                const duplicate = anchor.directions.some(d =>
+                    Math.abs(Math.abs(d.x * tx + d.y * ty) - 1) < 1e-5
+                );
+                if (!duplicate) anchor.directions.push({ x: tx, y: ty });
+            }
+        }
+    });
+
+    // Keep a compact recent reference set. Each anchor can produce X/Y and
+    // an entity-direction guide, so a large history quickly congests the view.
+    while (otrackPoints.length > 4) otrackPoints.shift();
 }
+
+function buildOtrackReferenceLines() {
+    const lines = [];
+    const anchors = (Array.isArray(otrackPoints) ? otrackPoints : []).slice(-4);
+
+    anchors.forEach(anchor => {
+        lines.push({ x: anchor.x, y: anchor.y, dx: 1, dy: 0, anchor, kind: 'x' });
+        lines.push({ x: anchor.x, y: anchor.y, dx: 0, dy: 1, anchor, kind: 'y' });
+
+        (anchor.directions || []).forEach(direction => {
+            const length = Math.hypot(direction.x, direction.y);
+            if (length < 1e-10) return;
+            lines.push({
+                x: anchor.x, y: anchor.y,
+                dx: direction.x / length,
+                dy: direction.y / length,
+                anchor,
+                kind: 'direction'
+            });
+        });
+    });
+    return lines;
+}
+
+function intersectOtrackGuides(a, b) {
+    // Two guides from the same acquired point always intersect at that point;
+    // that is not a new destination node, so ignore that pair.
+    if (a.anchor === b.anchor) return null;
+
+    const denominator = a.dx * b.dy - a.dy * b.dx;
+    if (Math.abs(denominator) < 1e-9) return null;
+
+    const qx = b.x - a.x;
+    const qy = b.y - a.y;
+    const t = (qx * b.dy - qy * b.dx) / denominator;
+    const x = a.x + t * a.dx;
+    const y = a.y + t * a.dy;
+
+    return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
 function computeOtrackPoint(cursor) {
-    // OTRACK acquires a real OSNAP point, then constrains one coordinate
-    // while the cursor moves near that point's horizontal/vertical axis.
     const aperture = 12 * worldPerPixel();
     let best = null;
+
+    const consider = candidate => {
+        if (!best || candidate.score < best.score) best = candidate;
+    };
+
     otrackPoints.forEach(anchor => {
         const dx = Math.abs(cursor.x - anchor.x);
         const dy = Math.abs(cursor.y - anchor.y);
-        // X tracking means same X coordinate -> a VERTICAL guide.
-        if (dx <= aperture && (!best || dx < best.score)) {
-            best = { x: anchor.x, y: cursor.y, anchor, axis: 'x', score: dx };
+
+        // Standard horizontal and vertical tracking paths.
+        if (dx <= aperture) {
+            consider({
+                x: anchor.x, y: cursor.y,
+                anchor, axis: 'x', score: dx
+            });
         }
-        // Y tracking means same Y coordinate -> a HORIZONTAL guide.
-        if (dy <= aperture && (!best || dy < best.score)) {
-            best = { x: cursor.x, y: anchor.y, anchor, axis: 'y', score: dy };
+        if (dy <= aperture) {
+            consider({
+                x: cursor.x, y: anchor.y,
+                anchor, axis: 'y', score: dy
+            });
         }
+
+        // Arbitrary-angle tracking along any segment through the acquired snap.
+        (anchor.directions || []).forEach(direction => {
+            const vx = cursor.x - anchor.x;
+            const vy = cursor.y - anchor.y;
+            const along = vx * direction.x + vy * direction.y;
+            const projectedX = anchor.x + along * direction.x;
+            const projectedY = anchor.y + along * direction.y;
+            const perpendicular = Math.hypot(cursor.x - projectedX, cursor.y - projectedY);
+
+            if (perpendicular <= aperture) {
+                consider({
+                    x: projectedX,
+                    y: projectedY,
+                    anchor,
+                    axis: 'direction',
+                    direction,
+                    score: perpendicular
+                });
+            }
+        });
     });
+
+    // AutoCAD-style OTRACK intersection destination: find crossings between
+    // the acquired horizontal, vertical and inclined reference guides. When
+    // the cursor approaches a crossing, return its exact coordinate so the
+    // next drawing click places the endpoint at that node.
+    const guides = buildOtrackReferenceLines();
+    const intersections = [];
+    for (let i = 0; i < guides.length; i++) {
+        for (let j = i + 1; j < guides.length; j++) {
+            const point = intersectOtrackGuides(guides[i], guides[j]);
+            if (!point) continue;
+
+            const distance = Math.hypot(cursor.x - point.x, cursor.y - point.y);
+            if (distance > aperture) continue;
+
+            const duplicate = intersections.some(existing =>
+                Math.hypot(existing.x - point.x, existing.y - point.y) < Math.max(aperture * 0.2, 1e-8)
+            );
+            if (duplicate) continue;
+
+            intersections.push(point);
+            consider({
+                x: point.x,
+                y: point.y,
+                anchor: guides[i].anchor,
+                axis: 'intersection',
+                intersection: true,
+                score: distance - aperture * 0.2
+            });
+        }
+    }
+
     return best;
 }
+
 function setupOtrackGuide(container) {
     if (otrackGuideEl) otrackGuideEl.remove();
     otrackGuideEl = document.createElement('div');
     otrackGuideEl.id = 'cad-otrack-guide';
-    otrackGuideEl.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:940;display:none;';
-    const line = document.createElement('div'); line.id='cad-otrack-guide-line';
-    line.style.cssText='position:absolute;border-color:#43d6a2;border-style:dashed;border-width:0;filter:drop-shadow(0 0 2px rgba(67,214,162,.35));';
-    otrackGuideEl.append(line); container.append(otrackGuideEl);
+    otrackGuideEl.style.cssText =
+        'position:absolute;inset:0;pointer-events:none;z-index:940;display:none;';
+    container.append(otrackGuideEl);
 }
-function showOtrackGuide(anchor, point, axis) {
-    if (!otrackGuideEl) return;
-    const line = otrackGuideEl.firstChild;
-    const a = worldToScreen(anchor.x, anchor.y);
-    const p = worldToScreen(point.x, point.y);
-    // Keep guide orientation consistent with the coordinate being tracked.
-    if (axis === 'x') {
-        line.style.cssText = `position:absolute;left:${a.x}px;top:0;width:0;height:100%;border-left:1px dashed #43d6a2;`;
-    } else {
-        line.style.cssText = `position:absolute;left:0;top:${a.y}px;width:100%;height:0;border-top:1px dashed #43d6a2;`;
+
+function makeOtrackGuideLine(cssText) {
+    const line = document.createElement('div');
+    line.className = 'cad-otrack-guide-line';
+    line.style.cssText =
+        'position:absolute;pointer-events:none;border-color:#43d6a2;' +
+        'border-style:dashed;border-width:0;' +
+        'filter:drop-shadow(0 0 2px rgba(67,214,162,.35));' + cssText;
+    otrackGuideEl.appendChild(line);
+    return line;
+}
+
+function showOtrackGuide(anchor, point, axis, direction, trackingResult) {
+    if (!otrackGuideEl || !anchor) return;
+
+    // Draw every acquired reference through the viewport, not just the one
+    // direction currently constraining the cursor. At an intersection of
+    // multiple entities this displays all crossing dotted guides together.
+    otrackGuideEl.replaceChildren();
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    const guideAnchors = (Array.isArray(otrackPoints) ? otrackPoints : [])
+        .slice(-4);
+
+    // Keep the active anchor visible even if it is not in the recent-point list.
+    if (!guideAnchors.includes(anchor)) guideAnchors.push(anchor);
+
+    const seen = new Set();
+    const addVertical = (screenX) => {
+        const key = `v:${Math.round(screenX * 10)}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        makeOtrackGuideLine(
+            `left:${screenX}px;top:0;width:0;height:${rect.height}px;` +
+            'border-left:1px dashed #43d6a2;'
+        );
+    };
+    const addHorizontal = (screenY) => {
+        const key = `h:${Math.round(screenY * 10)}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        makeOtrackGuideLine(
+            `left:0;top:${screenY}px;width:${rect.width}px;height:0;` +
+            'border-top:1px dashed #43d6a2;'
+        );
+    };
+    const addDirection = (pointAnchor, dir) => {
+        if (!dir || !Number.isFinite(dir.x) || !Number.isFinite(dir.y)) return;
+        const magnitude = Math.hypot(dir.x, dir.y);
+        if (magnitude < 1e-10) return;
+
+        const ux = dir.x / magnitude;
+        const uy = dir.y / magnitude;
+        // A direction and its reverse describe the same infinite guide.
+        const canonicalX = ux < -1e-8 ? -ux : ux;
+        const canonicalY = ux < -1e-8 ? -uy : uy;
+        const key = `d:${Math.round(pointAnchor.x * 10000)}:${Math.round(pointAnchor.y * 10000)}:` +
+            `${Math.round(canonicalX * 10000)}:${Math.round(canonicalY * 10000)}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        const a = worldToScreen(pointAnchor.x, pointAnchor.y);
+        const b = worldToScreen(pointAnchor.x + ux, pointAnchor.y + uy);
+        const angle = Math.atan2(b.y - a.y, b.x - a.x);
+        const length = Math.hypot(rect.width, rect.height) * 2.5;
+
+        // The line is centred exactly on its acquired point before rotation.
+        makeOtrackGuideLine(
+            `left:${a.x - length / 2}px;top:${a.y}px;width:${length}px;height:0;` +
+            'border-top:1px dashed #43d6a2;' +
+            `transform:rotate(${angle}rad);transform-origin:50% 50%;`
+        );
+    };
+
+    guideAnchors.forEach(pointAnchor => {
+        const screen = worldToScreen(pointAnchor.x, pointAnchor.y);
+        // AutoCAD-style X/Y alignment references remain available at every
+        // acquired point, in addition to all object-derived inclined guides.
+        addVertical(screen.x);
+        addHorizontal(screen.y);
+        (pointAnchor.directions || []).forEach(dir => addDirection(pointAnchor, dir));
+    });
+
+    // Ensure the currently selected tracking direction is represented even
+    // if the anchor's direction list was not populated by a legacy caller.
+    if (axis === 'x') addVertical(worldToScreen(anchor.x, anchor.y).x);
+    else if (axis === 'y') addHorizontal(worldToScreen(anchor.x, anchor.y).y);
+    else if (axis === 'direction' && direction) addDirection(anchor, direction);
+
+    // AutoCAD-style Apparent Intersection cursor:
+    // use a compact X snap glyph at the exact computed intersection, not an
+    // "INT" badge. The tooltip identifies the snap type while the glyph stays
+    // centred on the actual endpoint coordinate.
+    if (axis === 'intersection' || (trackingResult && trackingResult.intersection)) {
+        const screen = worldToScreen(point.x, point.y);
+
+        const marker = document.createElement('div');
+        marker.className = 'cad-otrack-intersection-node';
+        marker.setAttribute('aria-label', 'Apparent Intersection');
+        marker.title = 'Apparent Intersection';
+        marker.style.cssText =
+            `position:absolute;left:${screen.x}px;top:${screen.y}px;` +
+            'width:14px;height:14px;transform:translate(-50%,-50%);' +
+            'pointer-events:none;z-index:3;';
+
+        const glyph = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        glyph.setAttribute('viewBox', '0 0 16 16');
+        glyph.setAttribute('width', '16');
+        glyph.setAttribute('height', '16');
+        glyph.style.cssText = 'position:absolute;inset:-1px;overflow:visible;';
+        glyph.innerHTML =
+            '<path d="M3 3 L13 13 M13 3 L3 13" fill="none" ' +
+            'stroke="#55e6a5" stroke-width="2.2" stroke-linecap="square"/>' +
+            '<circle cx="8" cy="8" r="1.25" fill="#fff2a8" stroke="#164b37" stroke-width=".7"/>';
+        marker.appendChild(glyph);
+
+        const label = document.createElement('span');
+        label.textContent = 'Apparent Intersection';
+        label.style.cssText =
+            'position:absolute;left:13px;top:7px;white-space:nowrap;' +
+            'padding:2px 5px;background:rgba(24,24,24,.94);' +
+            'border:1px solid #55e6a5;border-radius:2px;' +
+            'color:#b9ffd9;font:11px Arial,sans-serif;line-height:14px;';
+        marker.appendChild(label);
+
+        // A subtle pick aperture around the X helps identify the exact snap
+        // location without obscuring the crosshair or the guide intersection.
+        const apertureRing = document.createElement('div');
+        apertureRing.style.cssText =
+            'position:absolute;left:50%;top:50%;width:8px;height:8px;' +
+            'transform:translate(-50%,-50%);border:1px solid rgba(85,230,165,.8);' +
+            'pointer-events:none;';
+        marker.appendChild(apertureRing);
+
+        otrackGuideEl.appendChild(marker);
     }
-    otrackGuideEl.style.display = 'block';
+
+    otrackGuideEl.style.display = otrackGuideEl.childElementCount ? 'block' : 'none';
 }
-function hideOtrackGuide(){if(otrackGuideEl)otrackGuideEl.style.display='none';}
+
+function hideOtrackGuide() {
+    if (otrackGuideEl) otrackGuideEl.style.display = 'none';
+}
 
 // --- snap marker (yellow AutoCAD-style glyph + tooltip) ---
 function setupSnapUI(container) {
@@ -369,54 +693,244 @@ function hideSnapMarker() {
     if (snapMarkerEl) snapMarkerEl.style.display = 'none';
 }
 
-// --- status bar: OSNAP / ORTHO / SNAP / GRID buttons + OSNAP settings menu ---
+// --- OSNAP status button: left-click toggles; right-click opens Settings... ---
+let osnapContextMenuEl = null;
+let osnapSettingsDialogEl = null;
+
 function setupStatusBar(container) {
+    restoreOsnapModes();
+
     const bar = document.createElement('div');
     bar.id = 'cad-status-bar';
-    bar.style.cssText = 'position:absolute; right:15px; bottom:62px; display:flex; gap:4px; z-index:1000;';
+    bar.style.cssText =
+        'position:absolute;right:15px;bottom:62px;display:flex;gap:4px;z-index:1000;';
 
     const mk = (id, label, handler) => {
-        const b = document.createElement('button');
-        b.id = id; b.type = 'button'; b.textContent = label;
-        b.style.cssText = `font: 11px Consolas, 'Courier New', monospace; padding:4px 8px; cursor:pointer;
-            border:1px solid #444; border-radius:3px; background:#2a2a2a; color:#ccc;`;
-        b.addEventListener('mousedown', e => e.preventDefault());   // keep keyboard focus off the button
-        b.addEventListener('click', e => { e.stopPropagation(); handler(); });
-        return b;
+        const button = document.createElement('button');
+        button.id = id;
+        button.type = 'button';
+        button.textContent = label;
+        button.style.cssText =
+            `font:11px Consolas,'Courier New',monospace;padding:4px 8px;cursor:pointer;` +
+            'border:1px solid #444;border-radius:3px;background:#2a2a2a;color:#ccc;';
+        button.addEventListener('mousedown', event => event.preventDefault());
+        button.addEventListener('click', event => {
+            event.stopPropagation();
+            handler();
+        });
+        return button;
     };
-    bar.appendChild(mk('cad-st-osnap', 'OSNAP', toggleOsnap));
+
+    const osnapButton = mk('cad-st-osnap', 'OSNAP', toggleOsnap);
+    osnapButton.title = 'Left-click: toggle Object Snap | Right-click: Settings';
+    osnapButton.addEventListener('contextmenu', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        showOsnapContextMenu(event.clientX, event.clientY);
+    });
+    bar.appendChild(osnapButton);
+
     bar.appendChild(mk('cad-st-otrack', 'OTRACK', toggleOtrack));
-    bar.appendChild(mk('cad-st-osnap-cfg', '▾', () => {
-        osnapMenuEl.style.display = osnapMenuEl.style.display === 'block' ? 'none' : 'block';
-    }));
     bar.appendChild(mk('cad-st-ortho', 'ORTHO', toggleOrtho));
     bar.appendChild(mk('cad-st-gsnap', 'SNAP', toggleGridSnap));
     bar.appendChild(mk('cad-st-grid', 'GRID', toggleGrid));
     container.appendChild(bar);
 
-    osnapMenuEl = document.createElement('div');
-    osnapMenuEl.style.cssText = `position:absolute; right:15px; bottom:92px; display:none; z-index:1001;
-        background:rgba(30,30,30,0.97); border:1px solid #444; border-radius:4px; padding:8px 12px;
-        color:#ddd; font: 12px Consolas, 'Courier New', monospace;`;
-    const title = document.createElement('div');
-    title.textContent = 'Object Snap Modes';
-    title.style.cssText = 'color:#00ffcc; margin-bottom:6px;';
-    osnapMenuEl.appendChild(title);
-    Object.keys(SNAP_LABELS).forEach(key => {
-        const row = document.createElement('label');
-        row.style.cssText = 'display:flex; align-items:center; gap:6px; padding:2px 0; cursor:pointer;';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = !!osnapModes[key];
-        cb.addEventListener('change', () => { osnapModes[key] = cb.checked; });
-        osnapCheckboxes[key] = cb;
-        row.appendChild(cb);
-        row.appendChild(document.createTextNode(SNAP_LABELS[key]));
-        osnapMenuEl.appendChild(row);
-    });
-    container.appendChild(osnapMenuEl);
+    setupOsnapContextMenu(container);
+    setupOsnapSettingsDialog(container);
     setupOtrackGuide(container);
     updateStatusBar();
+}
+
+function setupOsnapContextMenu(container) {
+    if (osnapContextMenuEl) osnapContextMenuEl.remove();
+
+    osnapContextMenuEl = document.createElement('div');
+    osnapContextMenuEl.id = 'cad-osnap-context-menu';
+    osnapContextMenuEl.style.cssText =
+        'position:fixed;display:none;min-width:150px;z-index:5000;padding:4px;' +
+        'background:#252526;border:1px solid #555;border-radius:5px;' +
+        'box-shadow:0 6px 18px rgba(0,0,0,.45);';
+
+    const settingsItem = document.createElement('button');
+    settingsItem.type = 'button';
+    settingsItem.textContent = 'Settings...';
+    settingsItem.style.cssText =
+        'display:block;width:100%;padding:8px 12px;text-align:left;color:#eee;' +
+        'background:transparent;border:0;border-radius:3px;cursor:pointer;font:13px Arial,sans-serif;';
+    settingsItem.addEventListener('mouseenter', () => {
+        settingsItem.style.background = '#094771';
+    });
+    settingsItem.addEventListener('mouseleave', () => {
+        settingsItem.style.background = 'transparent';
+    });
+    settingsItem.addEventListener('click', event => {
+        event.stopPropagation();
+        hideOsnapContextMenu();
+        openOsnapSettings();
+    });
+
+    osnapContextMenuEl.appendChild(settingsItem);
+    container.appendChild(osnapContextMenuEl);
+
+    document.addEventListener('pointerdown', event => {
+        if (osnapContextMenuEl &&
+            !osnapContextMenuEl.contains(event.target) &&
+            event.target.id !== 'cad-st-osnap') {
+            hideOsnapContextMenu();
+        }
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') hideOsnapContextMenu();
+    });
+}
+
+function showOsnapContextMenu(clientX, clientY) {
+    if (!osnapContextMenuEl) return;
+    osnapContextMenuEl.style.display = 'block';
+    const rect = osnapContextMenuEl.getBoundingClientRect();
+    const left = Math.max(6, Math.min(clientX, window.innerWidth - rect.width - 6));
+    const top = Math.max(6, Math.min(clientY, window.innerHeight - rect.height - 6));
+    osnapContextMenuEl.style.left = `${left}px`;
+    osnapContextMenuEl.style.top = `${top}px`;
+}
+
+function hideOsnapContextMenu() {
+    if (osnapContextMenuEl) osnapContextMenuEl.style.display = 'none';
+}
+
+function setupOsnapSettingsDialog(container) {
+    if (osnapSettingsDialogEl) osnapSettingsDialogEl.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'cad-osnap-settings-overlay';
+    overlay.style.cssText =
+        'position:fixed;inset:0;display:none;align-items:center;justify-content:center;' +
+        'z-index:5100;background:rgba(0,0,0,.48);padding:16px;box-sizing:border-box;';
+
+    const dialog = document.createElement('section');
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-labelledby', 'cad-osnap-settings-title');
+    dialog.style.cssText =
+        'width:min(360px,100%);max-height:min(80vh,520px);overflow:auto;color:#e8e8e8;' +
+        'background:#252526;border:1px solid #555;border-radius:8px;' +
+        'box-shadow:0 12px 36px rgba(0,0,0,.55);font:13px Arial,sans-serif;';
+
+    const header = document.createElement('div');
+    header.style.cssText =
+        'display:flex;align-items:center;justify-content:space-between;padding:13px 15px;border-bottom:1px solid #444;';
+    const title = document.createElement('strong');
+    title.id = 'cad-osnap-settings-title';
+    title.textContent = 'Object Snap Settings';
+    title.style.cssText = 'font-size:14px;color:#fff;';
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.textContent = '×';
+    closeButton.setAttribute('aria-label', 'Close settings');
+    closeButton.style.cssText =
+        'border:0;background:transparent;color:#bbb;font-size:22px;cursor:pointer;line-height:1;';
+    closeButton.addEventListener('click', closeOsnapSettings);
+    header.append(title, closeButton);
+    dialog.appendChild(header);
+
+    const body = document.createElement('div');
+    body.style.cssText =
+        'display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;padding:12px 16px 16px;';
+
+    Object.keys(SNAP_LABELS).forEach(key => {
+        const label = document.createElement('label');
+        label.style.cssText =
+            'display:flex;align-items:center;gap:8px;min-height:30px;cursor:pointer;color:#ddd;';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.dataset.osnapMode = key;
+        checkbox.checked = !!osnapModes[key];
+        checkbox.style.cssText = 'accent-color:#0e8ad6;width:14px;height:14px;';
+        checkbox.addEventListener('change', () => {
+            osnapModes[key] = checkbox.checked;
+            persistOsnapModes();
+        });
+        label.append(checkbox, document.createTextNode(SNAP_LABELS[key]));
+        body.appendChild(label);
+    });
+    dialog.appendChild(body);
+
+    const footer = document.createElement('div');
+    footer.style.cssText =
+        'display:flex;justify-content:flex-end;gap:8px;padding:10px 15px;border-top:1px solid #444;';
+
+    const buttonStyle =
+        'padding:7px 11px;color:#ddd;background:#333;border:1px solid #555;border-radius:4px;cursor:pointer;';
+    const allButton = document.createElement('button');
+    allButton.type = 'button';
+    allButton.textContent = 'Select All';
+    allButton.style.cssText = buttonStyle;
+    allButton.addEventListener('click', () => {
+        Object.keys(SNAP_LABELS).forEach(key => { osnapModes[key] = true; });
+        body.querySelectorAll('input[data-osnap-mode]').forEach(cb => { cb.checked = true; });
+        persistOsnapModes();
+    });
+
+    const noneButton = document.createElement('button');
+    noneButton.type = 'button';
+    noneButton.textContent = 'Clear All';
+    noneButton.style.cssText = buttonStyle;
+    noneButton.addEventListener('click', () => {
+        Object.keys(SNAP_LABELS).forEach(key => { osnapModes[key] = false; });
+        body.querySelectorAll('input[data-osnap-mode]').forEach(cb => { cb.checked = false; });
+        persistOsnapModes();
+    });
+
+    const doneButton = document.createElement('button');
+    doneButton.type = 'button';
+    doneButton.textContent = 'Done';
+    doneButton.style.cssText =
+        'padding:7px 14px;color:#fff;background:#007acc;border:1px solid #168bd2;border-radius:4px;cursor:pointer;';
+    doneButton.addEventListener('click', closeOsnapSettings);
+    footer.append(allButton, noneButton, doneButton);
+    dialog.appendChild(footer);
+
+    overlay.appendChild(dialog);
+    overlay.addEventListener('click', event => {
+        if (event.target === overlay) closeOsnapSettings();
+    });
+    container.appendChild(overlay);
+    osnapSettingsDialogEl = overlay;
+}
+
+function openOsnapSettings() {
+    if (!osnapSettingsDialogEl) return;
+    // Refresh checkbox states in case settings changed from another control.
+    osnapSettingsDialogEl.querySelectorAll('input[data-osnap-mode]').forEach(checkbox => {
+        checkbox.checked = !!osnapModes[checkbox.dataset.osnapMode];
+    });
+    osnapSettingsDialogEl.style.display = 'flex';
+}
+
+function closeOsnapSettings() {
+    if (osnapSettingsDialogEl) osnapSettingsDialogEl.style.display = 'none';
+}
+
+function restoreOsnapModes() {
+    try {
+        const saved = JSON.parse(localStorage.getItem('safaredge.cad.osnapModes') || 'null');
+        if (!saved || typeof saved !== 'object') return;
+        Object.keys(SNAP_LABELS).forEach(key => {
+            if (typeof saved[key] === 'boolean') osnapModes[key] = saved[key];
+        });
+    } catch (error) {
+        console.warn('[SAFAR EDGE CAD] Could not restore OSNAP settings:', error);
+    }
+}
+
+function persistOsnapModes() {
+    try {
+        localStorage.setItem('safaredge.cad.osnapModes', JSON.stringify(osnapModes));
+    } catch (error) {
+        console.warn('[SAFAR EDGE CAD] Could not save OSNAP settings:', error);
+    }
 }
 
 function updateStatusBar() {

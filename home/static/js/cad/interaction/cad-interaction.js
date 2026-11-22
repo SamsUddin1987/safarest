@@ -7,7 +7,11 @@ function onMouseMove(event) {
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-    const pt = getDrawPoint();
+    // During grip stretching, use the raw cursor here; the grip branch below
+    // applies OSNAP/OTRACK itself so SELECT mode does not clear acquired points.
+    const pt = selectionGripDrag
+        ? getCursorWorldCoordinates().clone()
+        : getDrawPoint();
 
     // Update coordinate display
     const coordEl = document.getElementById('cad-coords');
@@ -51,17 +55,21 @@ function onMouseMove(event) {
         return;
     }
 
-    // AUTOCAD-STYLE GRIP DRAGGING. Grip edits take priority over ordinary
-    // selection dragging and update the selected vertex/centre in real time.
+    // AUTOCAD-STYLE GRIP DRAGGING with OSNAP + OTRACK.
+    // OTRACK can now follow horizontal, vertical and acquired object-segment angles
+    // while an existing LINE/POLYLINE/RECTANGLE vertex or grip is being stretched.
     if (selectionGripDrag) {
         const drag = selectionGripDrag;
         const gripPoint = getCursorWorldCoordinates().clone();
+        let constrainedBySnapOrTrack = false;
 
-        // Snap to other entities, but never to the entity whose grip is moving.
+        const snapItems = drawnObjects
+            .filter(object => object !== drag.object && !(object.userData && object.userData.layerLocked))
+            .map(getSnapData);
+
+        // First priority: a real OSNAP point on another object. Acquiring it also
+        // remembers the direction of any line segment passing through that point.
         if (osnapOn && typeof computeOsnap === 'function' && typeof getSnapData === 'function') {
-            const snapItems = drawnObjects
-                .filter(object => object !== drag.object)
-                .map(getSnapData);
             const snap = computeOsnap(
                 snapItems,
                 gripPoint,
@@ -69,16 +77,48 @@ function onMouseMove(event) {
                 OSNAP_APERTURE_PX * worldPerPixel(),
                 osnapModes
             );
+
             if (snap) {
                 gripPoint.set(snap.x, snap.y, 0);
                 currentSnap = snap;
                 showSnapMarker(snap);
+                if (otrackOn && typeof rememberOtrackPoint === 'function') {
+                    rememberOtrackPoint(snap, snapItems);
+                }
+                hideOtrackGuide();
+                constrainedBySnapOrTrack = true;
             } else {
                 currentSnap = null;
                 hideSnapMarker();
             }
+        } else {
+            currentSnap = null;
+            hideSnapMarker();
         }
-        if (gridSnapOn) {
+
+        // If the cursor is not currently snapping to an object, track along
+        // the acquired OSNAP point's X/Y axis or source-segment direction.
+        if (!constrainedBySnapOrTrack && otrackOn && typeof computeOtrackPoint === 'function') {
+            const tracked = computeOtrackPoint(gripPoint);
+            if (tracked) {
+                gripPoint.set(tracked.x, tracked.y, 0);
+                showOtrackGuide(tracked.anchor, gripPoint, tracked.axis, tracked.direction);
+                constrainedBySnapOrTrack = true;
+            } else {
+                hideOtrackGuide();
+            }
+        } else if (!otrackOn) {
+            hideOtrackGuide();
+        }
+
+        // Keep the coordinate readout synchronized with the constrained grip point.
+        if (coordEl) {
+            coordEl.innerText =
+                `X: ${formatVal(gripPoint.x)} | Y: ${formatVal(gripPoint.y)}`;
+        }
+
+        // Grid snap is lower priority than a live OSNAP/OTRACK constraint.
+        if (!constrainedBySnapOrTrack && gridSnapOn) {
             gripPoint.x = Math.round(gripPoint.x / GRID_SPACING) * GRID_SPACING;
             gripPoint.y = Math.round(gripPoint.y / GRID_SPACING) * GRID_SPACING;
         }
@@ -185,12 +225,39 @@ function clearHover() {
     }
 }
 
-function clearSelection() {
-    selectedObjects.forEach(obj => {
-        obj.material.color.setHex(obj.userData.originalColor || 0xffffff);
+// Keep selection highlighting consistent for both single-click and
+// window/crossing selection. Some CAD entities use a material array.
+function setCadObjectSelectedState(obj, selected) {
+    if (!obj) return;
+    const materials = Array.isArray(obj.material)
+        ? obj.material
+        : (obj.material ? [obj.material] : []);
+    const color = selected ? 0x00ffff : ((obj.userData && obj.userData.originalColor) || 0xffffff);
+    materials.forEach(material => {
+        if (material && material.color && typeof material.color.setHex === 'function') {
+            material.color.setHex(color);
+        }
     });
+}
+
+function clearSelection() {
+    selectedObjects.forEach(obj => setCadObjectSelectedState(obj, false));
     selectedObjects = [];
     if (typeof updateSelectionGrips === 'function') updateSelectionGrips();
+}
+
+function removeSelectedObject(obj) {
+    if (!obj || !selectedObjects.includes(obj)) return false;
+    selectedObjects = selectedObjects.filter(item => item !== obj);
+    setCadObjectSelectedState(obj, false);
+    return true;
+}
+
+function addSelectedObject(obj) {
+    if (!obj || selectedObjects.includes(obj)) return false;
+    selectedObjects.push(obj);
+    setCadObjectSelectedState(obj, true);
+    return true;
 }
 
 function onCanvasClick(event) {
@@ -238,42 +305,47 @@ function onCanvasClick(event) {
 
     }
 
-    // Multi-Selection Logic in Select Mode
+    // AutoCAD-style persistent selection:
+    // - Normal click adds an entity to the current selection.
+    // - Shift + click removes an already-selected entity.
+    // - Clicking empty space never clears the current selection.
     if (currentTool === 'select') {
         raycaster.setFromCamera(mouse, camera);
-        const intersects = raycaster.intersectObjects(drawnObjects.filter(o => !(o.userData && o.userData.layerLocked)), true);
+        const intersects = raycaster.intersectObjects(
+            drawnObjects.filter(o => !(o.userData && o.userData.layerLocked)),
+            true
+        );
 
         if (intersects.length > 0) {
             let clickedObj = intersects[0].object;
-            // Dimension labels and extension lines are child objects. Resolve
-            // them to the owning top-level CAD entity before selection.
+            // Resolve child meshes (dimension labels/extension lines) to the
+            // owning top-level CAD entity before changing the selection.
             while (clickedObj && !drawnObjects.includes(clickedObj)) {
                 clickedObj = clickedObj.parent;
             }
             if (!clickedObj) return;
 
             if (event.shiftKey) {
-                // Shift + Click to toggle individual items
-                if (selectedObjects.includes(clickedObj)) {
-                    selectedObjects = selectedObjects.filter(o => o !== clickedObj);
-                    if (clickedObj.material && clickedObj.material.color) clickedObj.material.color.setHex(clickedObj.userData.originalColor || 0xffffff);
-                } else {
-                    selectedObjects.push(clickedObj);
-                    if (clickedObj.material && clickedObj.material.color) clickedObj.material.color.setHex(0x00ffff);
-                }
+                // Shift-click is a deselection gesture, not a toggle-add.
+                removeSelectedObject(clickedObj);
             } else {
-                // Regular Click selects multiple or replaces selection
-                if (!selectedObjects.includes(clickedObj)) {
-                    clearSelection();
-                    selectedObjects.push(clickedObj);
-                    if (clickedObj.material && clickedObj.material.color) clickedObj.material.color.setHex(0x00ffff);
-                }
+                // Ordinary clicks accumulate a multi-selection. Clicking an
+                // already-selected entity leaves the current selection intact.
+                addSelectedObject(clickedObj);
             }
+
             if (typeof updateSelectionGrips === 'function') updateSelectionGrips();
-            setCommandPrompt(`Selected ${selectedObjects.length} object(s). Press DELETE to erase.`);
+            setCommandPrompt(`Selected ${selectedObjects.length} object(s). Shift+click to remove; DELETE to erase.`);
             return;
-        } else if (!event.shiftKey) {
-            clearSelection();
+        }
+
+        // Empty-space clicks preserve the current selection. This allows
+        // users to keep a multi-selection while clicking elsewhere in the
+        // viewport. Use Shift+click on a selected entity to remove it, or
+        // an explicit selection-clear command when that feature is invoked.
+        if (selectedObjects.length) {
+            setCommandPrompt(`Selected ${selectedObjects.length} object(s). Shift+click an object to remove it.`);
+        } else {
             setCommandPrompt('Command: Ready. Select objects or pick a tool.');
         }
     }
@@ -348,6 +420,25 @@ function onMouseDown(event) {
             if (descriptor && descriptor.object && selectedObjects.includes(descriptor.object)) {
                 const context = CAD.createContext();
                 const cursorPoint = getCursorWorldCoordinates().clone();
+                // Start a fresh OTRACK acquisition session for this grip stretch.
+                if (otrackOn) {
+                    otrackPoints = [];
+                    otrackTool = '__grip__';
+
+                    // Acquire the original object's segment direction(s) at
+                    // the selected grip. The dragged entity is excluded from
+                    // live OSNAP targets, but its original geometry is still
+                    // a valid OTRACK direction reference for this stretch.
+                    if (typeof rememberOtrackPoint === 'function' &&
+                        typeof getSnapData === 'function') {
+                        const gripAnchor = descriptor.point || cursorPoint;
+                        rememberOtrackPoint(
+                            gripAnchor,
+                            [getSnapData(descriptor.object)]
+                        );
+                    }
+                }
+                hideOtrackGuide();
                 selectionGripDrag = {
                     object: descriptor.object,
                     descriptor,
@@ -417,6 +508,10 @@ function onMouseUp(event) {
             notify('Grip edit applied. (Ctrl+Z to undo)');
         }
         if (drag.originalGeometry) drag.originalGeometry.dispose();
+        hideOtrackGuide();
+        hideSnapMarker();
+        otrackPoints = [];
+        otrackTool = null;
         suppressNextClick = true;
         setTimeout(() => { suppressNextClick = false; }, 0);
         return;
@@ -500,21 +595,24 @@ function cancelBoxSelect() {
     if (boxEl) boxEl.style.display = 'none';
 }
 
-function applyBoxSelection(r, crossing, additive) {
-    if (!additive) clearSelection();
-
+function applyBoxSelection(r, crossing, removeMode) {
+    // Ordinary window/crossing selection adds to the current selection.
+    // Holding Shift while completing the box removes every hit entity.
     drawnObjects.forEach(obj => {
-        if (selectedObjects.includes(obj)) return;
+        if (obj.userData && obj.userData.layerLocked) return;
         const g = getScreenGeometry(obj);
         const hit = crossing ? crossesRect(g, r) : insideRect(g, r);
-        if (hit) {
-            selectedObjects.push(obj);
-            obj.material.color.setHex(0x00ffff);
+        if (!hit) return;
+
+        if (removeMode) {
+            removeSelectedObject(obj);
+        } else {
+            addSelectedObject(obj);
         }
     });
 
     if (typeof updateSelectionGrips === 'function') updateSelectionGrips();
-    setCommandPrompt(`${crossing ? 'Crossing' : 'Window'}: ${selectedObjects.length} object(s) selected. Press DELETE to erase.`);
+    setCommandPrompt(`${crossing ? 'Crossing' : 'Window'}: ${selectedObjects.length} object(s) selected. ${removeMode ? 'Shift removal' : 'Click to add; Shift+click to remove'}.`);
 }
 
 // Convert an entity to screen-pixel points (relative to the canvas)
