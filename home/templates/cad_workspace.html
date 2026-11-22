@@ -307,18 +307,25 @@
                     <button class="cad-menu-trigger" type="button">File</button>
                     <div class="cad-menu-panel">
 
-                        <button class="cad-menu-item" disabled>New Drawing</button>
+                        <button class="cad-menu-item" onclick="safarNewProject()">
+                            New Drawing
+                        </button>
 
-                        <button class="cad-menu-item"
-                            onclick="document.getElementById('cad-file-input').click()">
-                            Open Drawing
+                        <button class="cad-menu-item" onclick="safarOpenProject()">
+                            Open Project (.est)
                         </button>
 
                         <hr>
 
                         <button class="cad-menu-item" disabled>Open Recent</button>
-                        <button class="cad-menu-item" disabled>Save</button>
-                        <button class="cad-menu-item" disabled>Save As</button>
+
+                        <button class="cad-menu-item" onclick="safarSaveProject()">
+                            Save
+                        </button>
+
+                        <button class="cad-menu-item" onclick="safarSaveProjectAs()">
+                            Save As
+                        </button>
 
                         <hr>
 
@@ -714,7 +721,62 @@
 <script src="{% static 'js/cad/interaction/cad-keyboard.js' %}"></script>
 <script src="{% static 'js/cad/io/cad-import.js' %}"></script>
 
+<!-- NATIVE PROJECT FILE SYSTEM -->
+<script src="{% static 'js/cad/io/cad-project-files.js' %}"></script>
+
 <script>
+// ============================================
+// SAFAR EDGE LOCAL PROJECT FILE MENU
+// ============================================
+
+function getSafarProjectManager() {
+    if (!window.SafarEdgeProjectFiles) {
+        throw new Error(
+            'Project file module not loaded. Check cad-project-files.js.'
+        );
+    }
+
+    return window.SafarEdgeProjectFiles;
+}
+
+function safarNewProject() {
+    try {
+        getSafarProjectManager().newProject();
+    } catch (error) {
+        alert('Unable to create project:\n' + error.message);
+    }
+}
+
+async function safarOpenProject() {
+    try {
+        await getSafarProjectManager().openProject();
+    } catch (error) {
+        if (error.name !== 'AbortError') {
+            alert('Unable to open project:\n' + error.message);
+        }
+    }
+}
+
+async function safarSaveProject() {
+    try {
+        await getSafarProjectManager().saveProject();
+    } catch (error) {
+        if (error.name !== 'AbortError') {
+            alert('Unable to save project:\n' + error.message);
+        }
+    }
+}
+
+async function safarSaveProjectAs() {
+    try {
+        await getSafarProjectManager().saveProjectAs();
+    } catch (error) {
+        if (error.name !== 'AbortError') {
+            alert('Unable to save project:\n' + error.message);
+        }
+    }
+}
+
 document.addEventListener("DOMContentLoaded", function() {
     // CAD MAIN MENU CLICK HANDLING
     document.querySelectorAll('.cad-menu-trigger').forEach(function(trigger) {

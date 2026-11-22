@@ -494,6 +494,26 @@ function createCADCommandContext() {
             return renderer;
         },
 
+        // ---------------------------------
+        // LOCAL PROJECT FILE SUPPORT
+        // ---------------------------------
+
+        // Reset history when opening or creating a project.
+        resetHistory() {
+            undoStack.length = 0;
+            redoStack.length = 0;
+        },
+
+        // Restore drawing measurement settings.
+        setDrawingSettings(units, precision) {
+            if (typeof units === 'string' && units) {
+                sysUnits = units;
+            }
+
+            if (precision !== undefined && Number.isFinite(Number(precision))) {
+                sysPrecision = Number(precision);
+            }
+        },
 
         // ---------------------------------
         // TOOL OPERATIONS

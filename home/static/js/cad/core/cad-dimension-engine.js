@@ -631,7 +631,37 @@
         render();
     }
     CAD.Dimension = {
-        settings, getSettings:()=>clone(settings), currentStyle, getLayer, saveSettings:save, getCurrentLayer:()=>settings.currentLayer||'0', getUnits:()=>clone(settings.units||defaults.units), applyLayerState, applyLayerStates,
+        settings,
+
+        getSettings: () => clone(settings),
+
+        setSettings(projectSettings) {
+            if (!projectSettings || typeof projectSettings !== 'object') {
+                return false;
+            }
+
+            const restored = {
+                currentStyle: projectSettings.currentStyle || defaults.currentStyle,
+                styles: Object.assign(clone(defaults.styles), clone(projectSettings.styles || {})),
+                layers: Object.assign(clone(defaults.layers), clone(projectSettings.layers || {})),
+                currentLayer: projectSettings.currentLayer || '0',
+                units: Object.assign(clone(defaults.units), clone(projectSettings.units || {}))
+            };
+
+            Object.keys(settings).forEach(key => delete settings[key]);
+            Object.assign(settings, restored);
+
+            save();
+            applyLayerStates();
+            refreshAll();
+
+            return true;
+        },
+
+        currentStyle,
+        getLayer,
+        saveSettings: save,
+        getCurrentLayer:()=>settings.currentLayer||'0', getUnits:()=>clone(settings.units||defaults.units), applyLayerState, applyLayerStates,
         formatLinear, formatAngle, createLinear, createAngular, createRadial, createOrdinate, createCenterMark,
         add, openStyleManager, openLayerManager, openUnitsManager, refreshEntity, refreshAll, setTextOverride,
         setCurrentStyle(name){if(settings.styles[name]){settings.currentStyle=name;save();return true;}return false;},
