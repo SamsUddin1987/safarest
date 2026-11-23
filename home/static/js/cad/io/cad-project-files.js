@@ -405,7 +405,6 @@
 
                 currentFileHandle = handle;
                 currentFileName = handle.name;
-                await persistCurrentFileHandle();
                 isDirty = false;
                 lastAutoSavedVersion = dirtyVersion;
                 await deleteRecoverySnapshot();
@@ -446,8 +445,9 @@
 
         currentFileHandle = handle;
         currentFileName = file.name || handle?.name || 'Untitled.est';
-        if (handle) await persistCurrentFileHandle();
-        else await deletePersistedFileHandle();
+        // Keep the selected file handle only in this browser session.
+        // Never carry a previously opened file into a fresh workspace.
+        if (!handle) await deletePersistedFileHandle();
 
         isDirty = false;
         lastAutoSavedVersion = dirtyVersion;
@@ -628,22 +628,22 @@
     }
 
     function createSpreadsheetHooks() {
-        const changed = function () { markDirty(); };
+        // These are Luckysheet hooks (not Handsontable hooks).
+        // `updated` runs after workbook operations recorded in Luckysheet
+        // history, including edits, formatting, paste, row/column changes,
+        // sheet operations, and undo/redo.
+        const changed = function () {
+            markDirty();
+        };
+
         return {
-            afterChange: function (changes, source) {
-                if (source === 'loadData' || !changes) return;
-                changed();
-            },
-            afterCreateRow: changed,
-            afterCreateCol: changed,
-            afterDeleteRow: changed,
-            afterDeleteCol: changed,
-            afterSheetCreate: changed,
-            afterSheetDelete: changed,
-            afterSheetRename: changed,
-            afterSheetMove: changed,
-            afterSheetColorChange: changed,
-            afterUpdateConfig: changed
+            cellUpdated: changed,
+            updated: changed,
+            sheetCreateAfter: changed,
+            sheetDeleteAfter: changed,
+            sheetMoveAfter: changed,
+            sheetEditNameAfter: changed,
+            sheetEditColorAfter: changed
         };
     }
 
@@ -683,50 +683,9 @@
         return recoveryDbPromise;
     }
 
-    async function getRecoveryRecord(key) {
-        const db = await openRecoveryDatabase();
-        if (!db) return null;
-        return new Promise(function (resolve, reject) {
-            const tx = db.transaction(RECOVERY_STORE_NAME, 'readonly');
-            const request = tx.objectStore(RECOVERY_STORE_NAME).get(key);
-            request.onsuccess = function () { resolve(request.result || null); };
-            request.onerror = function () { reject(request.error || new Error('Could not read local project metadata.')); };
-        });
-    }
-
-    async function persistCurrentFileHandle() {
-        if (!currentFileHandle) return;
-        try {
-            const db = await openRecoveryDatabase();
-            if (!db) return;
-            await new Promise(function (resolve, reject) {
-                const tx = db.transaction(RECOVERY_STORE_NAME, 'readwrite');
-                tx.objectStore(RECOVERY_STORE_NAME).put({
-                    id: 'active-file-handle',
-                    handle: currentFileHandle,
-                    fileName: currentFileName
-                });
-                tx.oncomplete = resolve;
-                tx.onerror = function () { reject(tx.error || new Error('Could not remember the current project file.')); };
-                tx.onabort = function () { reject(tx.error || new Error('Could not remember the current project file.')); };
-            });
-        } catch (error) {
-            // File saving/opening must still succeed if handle persistence is unavailable.
-            console.warn('SAFAR EDGE could not persist the current file handle:', error);
-        }
-    }
-
-    async function restoreCurrentFileHandle() {
-        try {
-            const record = await getRecoveryRecord('active-file-handle');
-            if (!record || !record.handle || record.handle.kind !== 'file') return;
-            currentFileHandle = record.handle;
-            currentFileName = record.fileName || record.handle.name || '';
-        } catch (error) {
-            console.warn('SAFAR EDGE could not restore the saved file handle:', error);
-        }
-    }
-
+    // File handles are intentionally not restored across page sessions.
+    // A project becomes the active AutoSave target only after the user
+    // explicitly opens it or chooses Save As in the current session.
     async function deletePersistedFileHandle() {
         try {
             const db = await openRecoveryDatabase();
@@ -894,6 +853,7 @@
         saveProject,
         saveProjectAs,
         markDirty,
+        createSpreadsheetHooks,
         getAutoSaveIntervalSeconds,
         setAutoSaveIntervalSeconds,
         autoSaveNow: autoSaveProject,
@@ -912,7 +872,9 @@
 
     // Start AutoSave after CAD and Luckysheet have completed initialization.
     global.addEventListener('load', async function () {
-        await restoreCurrentFileHandle();
+        // Do not reconnect this blank workspace to a file used in an earlier
+        // session. AutoSave may target only a file explicitly opened/saved now.
+        await deletePersistedFileHandle();
         startAutoSaveTimer();
         await offerRecoveryOnStartup();
     }, { once: true });

@@ -326,9 +326,8 @@
                         <button class="cad-menu-item" onclick="safarSaveProjectAs()">
                             Save As
                         </button>
-
-                        <button class="cad-menu-item" id="safar-autosave-interval" onclick="safarSetAutoSaveInterval()">
-                            AutoSave Interval (60 sec)
+                        <button class="cad-menu-item" onclick="safarAutoSaveSettings()">
+                            AutoSave Interval...
                         </button>
 
                         <hr>
@@ -669,64 +668,64 @@
 <script src="https://cdn.jsdelivr.net/npm/dxf-parser@1.1.2/dist/dxf-parser.js"></script>
 
 <!-- CORE -->
-<script src="{% static 'js/cad/core/cad-registry.js' %}"></script>
-<script src="{% static 'js/cad/core/cad-core.js' %}"></script>
+<script src="{% static 'js/cad/core/cad-registry.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/core/cad-core.js' %}?v=20261123-5"></script>
 
 <!-- DRAW COMMANDS -->
 <!-- INDEPENDENT DRAW COMMANDS -->
-<script src="{% static 'js/cad/commands/draw/line.js' %}"></script>
-<script src="{% static 'js/cad/commands/draw/polyline.js' %}"></script>
-<script src="{% static 'js/cad/commands/draw/rectangle.js' %}"></script>
-<script src="{% static 'js/cad/commands/draw/circle.js' %}"></script>
-<script src="{% static 'js/cad/commands/draw/text.js' %}"></script>
+<script src="{% static 'js/cad/commands/draw/line.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/draw/polyline.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/draw/rectangle.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/draw/circle.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/draw/text.js' %}?v=20261123-5"></script>
 
 <!-- MODIFY COMMANDS -->
-<script src="{% static 'js/cad/core/modify-utils.js' %}"></script>
-<script src="{% static 'js/cad/commands/modify/erase.js' %}"></script>
-<script src="{% static 'js/cad/commands/modify/move.js' %}"></script>
-<script src="{% static 'js/cad/commands/modify/copy.js' %}"></script>
-<script src="{% static 'js/cad/commands/modify/rotate.js' %}"></script>
-<script src="{% static 'js/cad/commands/modify/scale.js' %}"></script>
-<script src="{% static 'js/cad/commands/modify/mirror.js' %}"></script>
-<script src="{% static 'js/cad/commands/modify/trim.js' %}"></script>
-<script src="{% static 'js/cad/commands/modify/extend.js' %}"></script>
-<script src="{% static 'js/cad/commands/modify/join.js' %}"></script>
-<script src="{% static 'js/cad/commands/modify/explode.js' %}"></script>
+<script src="{% static 'js/cad/core/modify-utils.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/modify/erase.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/modify/move.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/modify/copy.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/modify/rotate.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/modify/scale.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/modify/mirror.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/modify/trim.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/modify/extend.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/modify/join.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/modify/explode.js' %}?v=20261123-5"></script>
 
 <!-- DIMENSION ENGINE & STYLES -->
-<script src="{% static 'js/cad/core/cad-dimension-engine.js' %}"></script>
-<script src="{% static 'js/cad/commands/dimension/dimension-tools-common.js' %}"></script>
-<script src="{% static 'js/cad/commands/dimension/dim-linear.js' %}"></script>
-<script src="{% static 'js/cad/commands/dimension/dim-aligned.js' %}"></script>
-<script src="{% static 'js/cad/commands/dimension/dim-angular.js' %}"></script>
-<script src="{% static 'js/cad/commands/dimension/dim-radius.js' %}"></script>
-<script src="{% static 'js/cad/commands/dimension/dim-diameter.js' %}"></script>
-<script src="{% static 'js/cad/commands/dimension/dim-ordinate.js' %}"></script>
-<script src="{% static 'js/cad/commands/dimension/dim-center.js' %}"></script>
-<script src="{% static 'js/cad/commands/dimension/dim-continue-baseline.js' %}"></script>
-<script src="{% static 'js/cad/commands/dimension/dim-style-commands.js' %}"></script>
+<script src="{% static 'js/cad/core/cad-dimension-engine.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/dimension/dimension-tools-common.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-linear.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-aligned.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-angular.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-radius.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-diameter.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-ordinate.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-center.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-continue-baseline.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/dimension/dim-style-commands.js' %}?v=20261123-5"></script>
 
 <!-- INTERACTION -->
-<script src="{% static 'js/cad/interaction/cad-input.js' %}"></script>
-<script src="{% static 'js/cad/interaction/cad-interaction.js' %}"></script>
-<script src="{% static 'js/cad/interaction/cad-snapping.js' %}"></script>
+<script src="{% static 'js/cad/interaction/cad-input.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/interaction/cad-interaction.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/interaction/cad-snapping.js' %}?v=20261123-5"></script>
 
 <!-- HISTORY -->
-<script src="{% static 'js/cad/history/cad-history-view.js' %}"></script>
+<script src="{% static 'js/cad/history/cad-history-view.js' %}?v=20261123-5"></script>
 
 <!-- COMMAND LINE -->
-<script src="{% static 'js/cad/command-line/cad-command-line.js' %}"></script>
+<script src="{% static 'js/cad/command-line/cad-command-line.js' %}?v=20261123-5"></script>
 
 <!-- EXISTING TOOLS AND ENTITIES -->
-<script src="{% static 'js/cad/cad-tools.js' %}"></script>
-<script src="{% static 'js/cad/entities/cad-entities.js' %}"></script>
+<script src="{% static 'js/cad/cad-tools.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/entities/cad-entities.js' %}?v=20261123-5"></script>
 
 <!-- KEYBOARD AND IMPORT -->
-<script src="{% static 'js/cad/interaction/cad-keyboard.js' %}"></script>
-<script src="{% static 'js/cad/io/cad-import.js' %}"></script>
+<script src="{% static 'js/cad/interaction/cad-keyboard.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/io/cad-import.js' %}?v=20261123-5"></script>
 
 <!-- NATIVE PROJECT FILE SYSTEM -->
-<script src="{% static 'js/cad/io/cad-project-files.js' %}"></script>
+<script src="{% static 'js/cad/io/cad-project-files.js' %}?v=20261123-5"></script>
 
 <script>
 // ============================================
@@ -781,27 +780,24 @@ async function safarSaveProjectAs() {
     }
 }
 
-function safarSetAutoSaveInterval() {
+function safarAutoSaveSettings() {
     try {
         const manager = getSafarProjectManager();
         const current = manager.getAutoSaveIntervalSeconds();
-        const answer = prompt('Enter AutoSave interval in seconds (15 to 600):', current);
-        if (answer === null) return;
-        const seconds = manager.setAutoSaveIntervalSeconds(answer);
-        const item = document.getElementById('safar-autosave-interval');
-        if (item) item.textContent = 'AutoSave Interval (' + seconds + ' sec)';
+        const entered = window.prompt(
+            'AutoSave interval in seconds (15–600):',
+            String(current)
+        );
+        if (entered === null) return;
+
+        const value = Number(entered);
+        manager.setAutoSaveIntervalSeconds(value);
     } catch (error) {
-        alert('Unable to change AutoSave interval:\n' + error.message);
+        alert('Unable to update AutoSave interval: ' + error.message);
     }
 }
 
 document.addEventListener("DOMContentLoaded", function() {
-    const autoSaveMenuItem = document.getElementById('safar-autosave-interval');
-    if (autoSaveMenuItem && window.SafarEdgeProjectFiles) {
-        autoSaveMenuItem.textContent = 'AutoSave Interval (' +
-            window.SafarEdgeProjectFiles.getAutoSaveIntervalSeconds() + ' sec)';
-    }
-
     // CAD MAIN MENU CLICK HANDLING
     document.querySelectorAll('.cad-menu-trigger').forEach(function(trigger) {
         trigger.addEventListener('click', function(event) {
@@ -902,23 +898,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 status: 1,
                 celldata: []
             }],
-            hook: {
-                afterChange: function(changes, source) {
-                    if (source !== 'loadData' && changes && window.SafarEdgeProjectFiles) {
-                        window.SafarEdgeProjectFiles.markDirty();
-                    }
-                },
-                afterCreateRow: function() { window.SafarEdgeProjectFiles?.markDirty(); },
-                afterCreateCol: function() { window.SafarEdgeProjectFiles?.markDirty(); },
-                afterDeleteRow: function() { window.SafarEdgeProjectFiles?.markDirty(); },
-                afterDeleteCol: function() { window.SafarEdgeProjectFiles?.markDirty(); },
-                afterSheetCreate: function() { window.SafarEdgeProjectFiles?.markDirty(); },
-                afterSheetDelete: function() { window.SafarEdgeProjectFiles?.markDirty(); },
-                afterSheetRename: function() { window.SafarEdgeProjectFiles?.markDirty(); },
-                afterSheetMove: function() { window.SafarEdgeProjectFiles?.markDirty(); },
-                afterSheetColorChange: function() { window.SafarEdgeProjectFiles?.markDirty(); },
-                afterUpdateConfig: function() { window.SafarEdgeProjectFiles?.markDirty(); }
-            }
+            // Connect the initial workbook to the local .est AutoSave system.
+            hook: window.SafarEdgeProjectFiles.createSpreadsheetHooks()
         });
 
         const sheetEl = document.getElementById('luckysheet');

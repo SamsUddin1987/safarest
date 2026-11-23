@@ -60,6 +60,12 @@
         try { global.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); }
         catch (_) { /* storage may be unavailable in private browsing */ }
     }
+    function markProjectDirty() {
+        const projectFiles = global.SafarEdgeProjectFiles;
+        if (projectFiles && typeof projectFiles.markDirty === 'function') {
+            projectFiles.markDirty();
+        }
+    }
     function currentStyle() {
         return clone(settings.styles[settings.currentStyle] || settings.styles['ISO-25'] || defaults.styles['ISO-25']);
     }
@@ -464,7 +470,7 @@
         ui.button('Rename',false,()=>{if(activeName==='ISO-25'){styleStatus.textContent='The standard ISO-25 style is protected.';return;}const n=global.prompt('Rename style:',activeName);if(!n||settings.styles[n])return;saveVisibleToStyle();settings.styles[n]=Object.assign({},settings.styles[activeName],{name:n});delete settings.styles[activeName];if(settings.currentStyle===activeName)settings.currentStyle=n;activeName=n;renderStyleList();renderFields();});
         ui.button('Delete',false,()=>{if(activeName==='ISO-25'){styleStatus.textContent='The standard ISO-25 style cannot be deleted.';return;}if(!global.confirm(`Delete dimension style ${activeName}?`))return;delete settings.styles[activeName];activeName=settings.currentStyle in settings.styles?settings.currentStyle:'ISO-25';renderStyleList();renderFields();});
         ui.button('Close',false,ui.close);
-        ui.button('Set Current & Apply',true,()=>{saveVisibleToStyle();settings.currentStyle=activeName;save();ui.close();refreshAll();if(global.notify)global.notify(`Dimension style ${activeName} is current.`);});
+        ui.button('Set Current & Apply',true,()=>{saveVisibleToStyle();settings.currentStyle=activeName;save();markProjectDirty();ui.close();refreshAll();if(global.notify)global.notify(`Dimension style ${activeName} is current.`);});
         renderTabs();renderStyleList();renderFields();
     }
     function applyLayerState(entity) {
@@ -554,19 +560,19 @@
         function redraw(){body.innerHTML='';Object.keys(settings.layers).forEach(name=>{const l=settings.layers[name];const tr=document.createElement('tr');const td=(node)=>{const c=document.createElement('td');c.append(node);tr.append(c);return c;};
             const radio=document.createElement('input');radio.type='radio';radio.name='safar-current-layer';radio.checked=selected===name;radio.onchange=()=>{selected=name;};td(radio);
             const nm=document.createElement('strong');nm.textContent=name;td(nm);
-            [['visible','On'],['frozen','Freeze'],['locked','Lock'],['plot','Plot']].forEach(([key])=>{const cb=document.createElement('input');cb.type='checkbox';cb.checked=l[key]!==false;cb.onchange=()=>{l[key]=cb.checked;save();applyLayerStates();};td(cb);});
-            const color=document.createElement('input');color.type='color';color.className='safar-layer-control';color.value=l.color||'#ffffff';color.onchange=()=>{l.color=color.value;save();applyLayerStates();refreshAll();};td(color);
-            const lt=document.createElement('select');lt.className='safar-layer-control';['Continuous','Dashed','Hidden','Center','Dotted'].forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;lt.append(o);});lt.value=l.linetype||'Continuous';lt.onchange=()=>{l.linetype=lt.value;save();applyLayerStates();refreshAll();};td(lt);
-            const lw=document.createElement('select');lw.className='safar-layer-control';['Default','0.00','0.05','0.09','0.13','0.15','0.18','0.20','0.25','0.30','0.35','0.40','0.50','0.53','0.60','0.70','0.80','1.00','1.06','1.20','1.40','1.58','2.00','2.11'].forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v==='Default'?v:v+' mm';lw.append(o);});lw.value=String(l.lineweight||'Default');lw.onchange=()=>{l.lineweight=lw.value==='Default'?0:Number(lw.value);save();applyLayerStates();refreshAll();};td(lw);
+            [['visible','On'],['frozen','Freeze'],['locked','Lock'],['plot','Plot']].forEach(([key])=>{const cb=document.createElement('input');cb.type='checkbox';cb.checked=l[key]!==false;cb.onchange=()=>{l[key]=cb.checked;save();markProjectDirty();applyLayerStates();};td(cb);});
+            const color=document.createElement('input');color.type='color';color.className='safar-layer-control';color.value=l.color||'#ffffff';color.onchange=()=>{l.color=color.value;save();markProjectDirty();applyLayerStates();refreshAll();};td(color);
+            const lt=document.createElement('select');lt.className='safar-layer-control';['Continuous','Dashed','Hidden','Center','Dotted'].forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;lt.append(o);});lt.value=l.linetype||'Continuous';lt.onchange=()=>{l.linetype=lt.value;save();markProjectDirty();applyLayerStates();refreshAll();};td(lt);
+            const lw=document.createElement('select');lw.className='safar-layer-control';['Default','0.00','0.05','0.09','0.13','0.15','0.18','0.20','0.25','0.30','0.35','0.40','0.50','0.53','0.60','0.70','0.80','1.00','1.06','1.20','1.40','1.58','2.00','2.11'].forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v==='Default'?v:v+' mm';lw.append(o);});lw.value=String(l.lineweight||'Default');lw.onchange=()=>{l.lineweight=lw.value==='Default'?0:Number(lw.value);save();markProjectDirty();applyLayerStates();refreshAll();};td(lw);
             body.append(tr);
         });}
         const toolBtn=(text,fn,primary=false)=>{const b=document.createElement('button');b.type='button';b.className='safar-btn'+(primary?' primary':'');b.textContent=text;b.onclick=fn;toolbar.append(b);};
-        toolBtn('New layer',()=>{const n=global.prompt('New layer name:','LAYER-'+(Object.keys(settings.layers).length));if(!n||settings.layers[n])return;settings.layers[n]={name:n,color:'#ffffff',lineweight:0.25,linetype:'Continuous',visible:true,frozen:false,locked:false,plot:true};selected=n;redraw();save();});
-        toolBtn('Set current',()=>{settings.currentLayer=selected;save();applyLayerStates();if(global.notify)global.notify(`Current layer: ${selected}`);redraw();});
-        toolBtn('Rename',()=>{if(selected==='0')return;const oldName=selected;const n=global.prompt('Rename layer:',oldName);if(!n||settings.layers[n])return;settings.layers[n]=Object.assign({},settings.layers[oldName],{name:n});delete settings.layers[oldName];if(settings.currentLayer===oldName)settings.currentLayer=n;try{CAD.createContext().getObjects().forEach(o=>{if(o.userData&&o.userData.layer===oldName)o.userData.layer=n;});}catch(_){}selected=n;save();redraw();applyLayerStates();});
-        toolBtn('Delete',()=>{if(selected==='0'){global.alert('Layer 0 cannot be deleted.');return;}if(!global.confirm(`Delete layer ${selected}?`))return;const oldName=selected;delete settings.layers[oldName];try{CAD.createContext().getObjects().forEach(o=>{if(o.userData&&o.userData.layer===oldName)o.userData.layer='0';});}catch(_){}if(settings.currentLayer===oldName)settings.currentLayer='0';selected=settings.currentLayer;save();redraw();applyLayerStates();},false);
+        toolBtn('New layer',()=>{const n=global.prompt('New layer name:','LAYER-'+(Object.keys(settings.layers).length));if(!n||settings.layers[n])return;settings.layers[n]={name:n,color:'#ffffff',lineweight:0.25,linetype:'Continuous',visible:true,frozen:false,locked:false,plot:true};selected=n;redraw();save();markProjectDirty();});
+        toolBtn('Set current',()=>{settings.currentLayer=selected;save();markProjectDirty();applyLayerStates();if(global.notify)global.notify(`Current layer: ${selected}`);redraw();});
+        toolBtn('Rename',()=>{if(selected==='0')return;const oldName=selected;const n=global.prompt('Rename layer:',oldName);if(!n||settings.layers[n])return;settings.layers[n]=Object.assign({},settings.layers[oldName],{name:n});delete settings.layers[oldName];if(settings.currentLayer===oldName)settings.currentLayer=n;try{CAD.createContext().getObjects().forEach(o=>{if(o.userData&&o.userData.layer===oldName)o.userData.layer=n;});}catch(_){}selected=n;save();markProjectDirty();redraw();applyLayerStates();});
+        toolBtn('Delete',()=>{if(selected==='0'){global.alert('Layer 0 cannot be deleted.');return;}if(!global.confirm(`Delete layer ${selected}?`))return;const oldName=selected;delete settings.layers[oldName];try{CAD.createContext().getObjects().forEach(o=>{if(o.userData&&o.userData.layer===oldName)o.userData.layer='0';});}catch(_){}if(settings.currentLayer===oldName)settings.currentLayer='0';selected=settings.currentLayer;save();markProjectDirty();redraw();applyLayerStates();},false);
         const status=document.createElement('div');status.className='safar-status';status.style.marginTop='10px';status.textContent='Layer properties are stored with the dimension/layer settings profile.';ui.body.append(status);
-        ui.button('Close',false,ui.close);ui.button('Apply & Close',true,()=>{settings.currentLayer=selected;save();applyLayerStates();ui.close();refreshAll();});
+        ui.button('Close',false,ui.close);ui.button('Apply & Close',true,()=>{settings.currentLayer=selected;save();markProjectDirty();applyLayerStates();ui.close();refreshAll();});
         redraw();
     }
     function refreshEntity(entity, useCurrent) {
@@ -601,6 +607,7 @@
         const old=entity.children.find(c=>c.userData&&c.userData.isDimensionText);
         if(old){entity.remove(old);if(old.material){if(old.material.map)old.material.map.dispose();old.material.dispose();}}
         entity.userData.textOverride=String(text||'');
+        markProjectDirty();
         if(!text){refreshEntity(entity,true);return true;}
         entity.userData.dimensionText=String(text);
         const pos=new THREE.Vector3();
@@ -627,7 +634,7 @@
           const note=document.createElement('div');note.className='safar-hint';note.style.gridColumn='1/-1';note.textContent=active==='Length'?'Length units control drawing-unit conventions and the default dimension display. Existing geometry coordinates are not rescaled by changing this setting.':'Angular settings control displayed angular values. Geometry remains stored in radians internally.';content.append(note);
         }
         ui.button('Cancel',false,ui.close);
-        ui.button('Apply',true,()=>{captureUnits();settings.units=units;const st=Object.assign({},settings.styles[settings.currentStyle]);st.linearFormat=units.lengthType;st.precision=units.lengthPrecision;st.displayUnit=({Millimeters:'mm',Centimeters:'cm',Meters:'m',Inches:'inch',Feet:'ft','US Survey Feet':'ft',Unitless:st.displayUnit})[units.insertionScale]||st.displayUnit;st.angularFormat=units.angleType;st.angularPrecision=units.anglePrecision;settings.styles[settings.currentStyle]=st;save();ui.close();refreshAll();});
+        ui.button('Apply',true,()=>{captureUnits();settings.units=units;const st=Object.assign({},settings.styles[settings.currentStyle]);st.linearFormat=units.lengthType;st.precision=units.lengthPrecision;st.displayUnit=({Millimeters:'mm',Centimeters:'cm',Meters:'m',Inches:'inch',Feet:'ft','US Survey Feet':'ft',Unitless:st.displayUnit})[units.insertionScale]||st.displayUnit;st.angularFormat=units.angleType;st.angularPrecision=units.anglePrecision;settings.styles[settings.currentStyle]=st;save();markProjectDirty();ui.close();refreshAll();});
         render();
     }
     CAD.Dimension = {
@@ -664,9 +671,9 @@
         getCurrentLayer:()=>settings.currentLayer||'0', getUnits:()=>clone(settings.units||defaults.units), applyLayerState, applyLayerStates,
         formatLinear, formatAngle, createLinear, createAngular, createRadial, createOrdinate, createCenterMark,
         add, openStyleManager, openLayerManager, openUnitsManager, refreshEntity, refreshAll, setTextOverride,
-        setCurrentStyle(name){if(settings.styles[name]){settings.currentStyle=name;save();return true;}return false;},
-        setLayer(name,props){settings.layers[name]=Object.assign({name,color:'#ffffff',lineweight:0.25,linetype:'Continuous',visible:true,frozen:false,locked:false,plot:true},props||{});save();applyLayerStates();},
-        setCurrentLayer(name){if(!settings.layers[name])return false;settings.currentLayer=name;save();return true;},
+        setCurrentStyle(name){if(settings.styles[name]){settings.currentStyle=name;save();markProjectDirty();return true;}return false;},
+        setLayer(name,props){settings.layers[name]=Object.assign({name,color:'#ffffff',lineweight:0.25,linetype:'Continuous',visible:true,frozen:false,locked:false,plot:true},props||{});save();markProjectDirty();applyLayerStates();},
+        setCurrentLayer(name){if(!settings.layers[name])return false;settings.currentLayer=name;save();markProjectDirty();return true;},
         getLastLinear(){return lastLinear;},
         setLastLinear(value){lastLinear=value?clone(value):null;}
     };

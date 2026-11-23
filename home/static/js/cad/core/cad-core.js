@@ -533,11 +533,19 @@ function createCADCommandContext() {
         // ---------------------------------
 
         addEntity(object, record) {
-            return addEntity(object, record);
+            const result = addEntity(object, record);
+            if (window.SafarEdgeProjectFiles) {
+                window.SafarEdgeProjectFiles.markDirty();
+            }
+            return result;
         },
 
         removeEntity(object) {
-            return removeEntity(object);
+            const result = removeEntity(object);
+            if (window.SafarEdgeProjectFiles) {
+                window.SafarEdgeProjectFiles.markDirty();
+            }
+            return result;
         },
 
 

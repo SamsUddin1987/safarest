@@ -84,8 +84,14 @@ def workspace_view(request, tool_type='cad_default'):
         'tool_type': tool_type,
     }
     
-    # Unified template for both CAD & Estimation submenus
-    return render(request, 'cad_workspace.html', context)
+    # Unified template for both CAD & Estimation submenus.
+    # This workspace contains inline menu logic and frequently updated CAD
+    # modules, so ask browsers/CDNs to revalidate the HTML on every visit.
+    response = render(request, 'cad_workspace.html', context)
+    response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
 
 # Backward-compatibility alias (in case legacy URLs call cad_workspace)
 cad_workspace = workspace_view
