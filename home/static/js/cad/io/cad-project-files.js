@@ -98,6 +98,7 @@
             drawing: {
                 units: state.units,
                 precision: state.precision,
+                limits: state.limits,
                 dimensionSettings: global.CAD.Dimension.getSettings(),
                 camera: getCameraData(),
                 entities: entities
@@ -255,6 +256,20 @@
             data.drawing.precision
         );
 
+        // Restore drawing limits.
+        // Older .est projects without this property retain the default settings.
+        if (data.drawing.limits) {
+            context.setDrawingLimits(data.drawing.limits);
+        } else {
+            context.setDrawingLimits({
+                active: false,
+                minX: 0,
+                minY: 0,
+                maxX: 420,
+                maxY: 297
+            });
+        }
+        
         // Remove the current drawing and release its resources.
         context.clearSelection();
 

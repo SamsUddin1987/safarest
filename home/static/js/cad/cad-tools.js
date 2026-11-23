@@ -86,12 +86,27 @@ function translateCadObjects(objects, dx, dy) {
 }
 
 function handleToolClick(pt) {
-    lastPoint = pt.clone();
+
     // =========================================
     // INDEPENDENT DRAW COMMAND DISPATCHER
     // =========================================
 
     const activeDrawTool = CAD.getTool(currentTool);
+
+    // Enforce drawing limits for drawing tools only.
+    if (
+        activeDrawTool &&
+        typeof activeDrawTool.onClick === 'function' &&
+        !CAD.createContext().isPointWithinLimits(pt)
+    ) {
+        setCommandPrompt(
+            `LIMITS — Point outside drawing boundary. ` +
+            `X: ${formatVal(pt.x)}, Y: ${formatVal(pt.y)}`
+        );
+        return;
+    }
+
+    lastPoint = pt.clone();
 
     if (
         activeDrawTool &&
@@ -117,13 +132,17 @@ function handleToolClick(pt) {
         currentPoints = [basePoint];
         isDrawing = true;
         toolStep = 1;
+
         if (currentTool === 'rect') setCommandPrompt('RECTANG — Pick opposite corner:');
         if (currentTool === 'dist') setCommandPrompt('DIST — Specify second point:');
         if (currentTool === 'zoomw') setCommandPrompt('ZOOM — Specify opposite corner:');
+
     } else {
+
         if (currentTool === 'dist') {
             reportDistance(basePoint, pt);
             finishTool();
+
         } else if (currentTool === 'zoomw') {
             zoomToWindow(basePoint, pt);
             finishTool();

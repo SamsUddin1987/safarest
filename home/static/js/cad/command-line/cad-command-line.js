@@ -7,6 +7,12 @@ const RE_POLAR = /^([-+]?(?:\d+\.?\d*|\.\d+))<([-+]?(?:\d+\.?\d*|\.\d+))$/;
 // run = implemented here. No run = real AutoCAD command that is recognised but not built yet.
 const planned = (name, aliases, desc) => ({ name, aliases, desc, run: null });
 const CAD_COMMANDS = [
+    {
+        name: 'LIMITS',
+        aliases: [],
+        desc: 'Set drawing limits ON/OFF',
+        run: () => cmdLimits()
+    },
     { name: 'ERASE', aliases: ['E'], desc: 'Delete objects', run: () => cmdErase() },
     { name: 'SELECT', aliases: [], desc: 'Select objects (type ALL to select everything)', run: () => cmdSelect() },
     { name: 'UNDO', aliases: ['U'], desc: 'Undo the last action', run: () => undo() },
@@ -517,6 +523,98 @@ function cmdMode(name, get, set) {
             return true;
         },
         onEnter: () => { pendingCommand = null; setCommandPrompt('Command:'); }
+    });
+}
+
+function cmdLimits() {
+
+    const context = CAD.createContext();
+    const limits = context.getDrawingLimits();
+
+    startPending({
+        name: 'LIMITS',
+
+        prompt: `LIMITS — Specify lower-left corner or [ON/OFF] <${limits.minX},${limits.minY}>:`,
+
+        onText: up => {
+
+            if (up === 'ON' || up === 'OFF') {
+
+                context.setDrawingLimits({
+                    ...context.getDrawingLimits(),
+                    active: up === 'ON'
+                });
+
+                pendingCommand = null;
+
+                notify(`Drawing limits ${up}.`);
+
+                return true;
+            }
+
+            const point = parsePointInput(up, false);
+
+            if (!point) {
+                logHistory('LIMITS — Enter coordinates in X,Y format or ON/OFF.');
+                return true;
+            }
+
+            const lowerLeft = point;
+
+            startPending({
+                name: 'LIMITS_UPPER',
+
+                prompt: 'LIMITS — Specify upper-right corner:',
+
+                onText: upperText => {
+
+                    const upperRight = parsePointInput(upperText, false);
+
+                    if (!upperRight) {
+                        logHistory('LIMITS — Invalid upper-right coordinates.');
+                        return true;
+                    }
+
+                    try {
+
+                        context.setDrawingLimits({
+                            active: limits.active,
+                            minX: lowerLeft.x,
+                            minY: lowerLeft.y,
+                            maxX: upperRight.x,
+                            maxY: upperRight.y
+                        });
+
+                        pendingCommand = null;
+
+                        notify(
+                            `Drawing limits set: ` +
+                            `${lowerLeft.x},${lowerLeft.y} to ` +
+                            `${upperRight.x},${upperRight.y}`
+                        );
+
+                    } catch (error) {
+
+                        logHistory(error.message);
+
+                    }
+
+                    return true;
+                },
+
+                onEnter: () => {
+                    pendingCommand = null;
+                    setCommandPrompt('Command:');
+                }
+            });
+
+            return true;
+        },
+
+        onEnter: () => {
+            pendingCommand = null;
+            setCommandPrompt('Command:');
+        }
     });
 }
 

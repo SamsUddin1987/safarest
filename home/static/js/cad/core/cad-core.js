@@ -18,10 +18,14 @@ const CAD_CONFIG = {
 let sysUnits = CAD_CONFIG.unit;
 let sysPrecision = CAD_CONFIG.precision;
 
-// Drawing limits disabled.
-// CAD drawings can extend beyond any predefined boundary.
+// Drawing limits — AutoCAD-style drawing boundary.
+// Default boundary is inactive until the user enables it.
 let sysLimits = {
-    active: false
+    active: false,
+    minX: 0,
+    minY: 0,
+    maxX: 420,
+    maxY: 297
 };
 
 // State Engine & Tool Variables
@@ -425,6 +429,7 @@ function createCADCommandContext() {
 
                 units: sysUnits,
                 precision: sysPrecision,
+                limits: { ...sysLimits },
 
                 drawnObjects: [...drawnObjects],
                 selectedObjects: [...selectedObjects]
@@ -513,6 +518,55 @@ function createCADCommandContext() {
             if (precision !== undefined && Number.isFinite(Number(precision))) {
                 sysPrecision = Number(precision);
             }
+        },
+
+        // Drawing limits support
+        getDrawingLimits() {
+            return { ...sysLimits };
+        },
+
+        setDrawingLimits(limits) {
+            if (!limits || typeof limits !== 'object') {
+                throw new Error('Invalid drawing limits.');
+            }
+
+            const minX = Number(limits.minX);
+            const minY = Number(limits.minY);
+            const maxX = Number(limits.maxX);
+            const maxY = Number(limits.maxY);
+
+            if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
+                throw new Error('Drawing limits must contain valid coordinates.');
+            }
+
+            if (maxX <= minX || maxY <= minY) {
+                throw new Error('Upper-right corner must be greater than lower-left corner.');
+            }
+
+            sysLimits = {
+                active: Boolean(limits.active),
+                minX,
+                minY,
+                maxX,
+                maxY
+            };
+
+            if (window.SafarEdgeProjectFiles) {
+                window.SafarEdgeProjectFiles.markDirty();
+            }
+
+            return { ...sysLimits };
+        },
+
+        isPointWithinLimits(point) {
+            if (!sysLimits.active) return true;
+
+            return (
+                point.x >= sysLimits.minX &&
+                point.x <= sysLimits.maxX &&
+                point.y >= sysLimits.minY &&
+                point.y <= sysLimits.maxY
+            );
         },
 
         // ---------------------------------
