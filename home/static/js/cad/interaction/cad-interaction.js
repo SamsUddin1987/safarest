@@ -7,11 +7,7 @@ function onMouseMove(event) {
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-    // During grip stretching, use the raw cursor here; the grip branch below
-    // applies OSNAP/OTRACK itself so SELECT mode does not clear acquired points.
-    const pt = selectionGripDrag
-        ? getCursorWorldCoordinates().clone()
-        : getDrawPoint();
+    const pt = getDrawPoint();
 
     // Update coordinate display
     const coordEl = document.getElementById('cad-coords');
@@ -55,21 +51,17 @@ function onMouseMove(event) {
         return;
     }
 
-    // AUTOCAD-STYLE GRIP DRAGGING with OSNAP + OTRACK.
-    // OTRACK can now follow horizontal, vertical and acquired object-segment angles
-    // while an existing LINE/POLYLINE/RECTANGLE vertex or grip is being stretched.
+    // AUTOCAD-STYLE GRIP DRAGGING. Grip edits take priority over ordinary
+    // selection dragging and update the selected vertex/centre in real time.
     if (selectionGripDrag) {
         const drag = selectionGripDrag;
         const gripPoint = getCursorWorldCoordinates().clone();
-        let constrainedBySnapOrTrack = false;
 
-        const snapItems = drawnObjects
-            .filter(object => object !== drag.object && !(object.userData && object.userData.layerLocked))
-            .map(getSnapData);
-
-        // First priority: a real OSNAP point on another object. Acquiring it also
-        // remembers the direction of any line segment passing through that point.
+        // Snap to other entities, but never to the entity whose grip is moving.
         if (osnapOn && typeof computeOsnap === 'function' && typeof getSnapData === 'function') {
+            const snapItems = drawnObjects
+                .filter(object => object !== drag.object)
+                .map(getSnapData);
             const snap = computeOsnap(
                 snapItems,
                 gripPoint,
@@ -77,48 +69,16 @@ function onMouseMove(event) {
                 OSNAP_APERTURE_PX * worldPerPixel(),
                 osnapModes
             );
-
             if (snap) {
                 gripPoint.set(snap.x, snap.y, 0);
                 currentSnap = snap;
                 showSnapMarker(snap);
-                if (otrackOn && typeof rememberOtrackPoint === 'function') {
-                    rememberOtrackPoint(snap, snapItems);
-                }
-                hideOtrackGuide();
-                constrainedBySnapOrTrack = true;
             } else {
                 currentSnap = null;
                 hideSnapMarker();
             }
-        } else {
-            currentSnap = null;
-            hideSnapMarker();
         }
-
-        // If the cursor is not currently snapping to an object, track along
-        // the acquired OSNAP point's X/Y axis or source-segment direction.
-        if (!constrainedBySnapOrTrack && otrackOn && typeof computeOtrackPoint === 'function') {
-            const tracked = computeOtrackPoint(gripPoint);
-            if (tracked) {
-                gripPoint.set(tracked.x, tracked.y, 0);
-                showOtrackGuide(tracked.anchor, gripPoint, tracked.axis, tracked.direction);
-                constrainedBySnapOrTrack = true;
-            } else {
-                hideOtrackGuide();
-            }
-        } else if (!otrackOn) {
-            hideOtrackGuide();
-        }
-
-        // Keep the coordinate readout synchronized with the constrained grip point.
-        if (coordEl) {
-            coordEl.innerText =
-                `X: ${formatVal(gripPoint.x)} | Y: ${formatVal(gripPoint.y)}`;
-        }
-
-        // Grid snap is lower priority than a live OSNAP/OTRACK constraint.
-        if (!constrainedBySnapOrTrack && gridSnapOn) {
+        if (gridSnapOn) {
             gripPoint.x = Math.round(gripPoint.x / GRID_SPACING) * GRID_SPACING;
             gripPoint.y = Math.round(gripPoint.y / GRID_SPACING) * GRID_SPACING;
         }
@@ -420,25 +380,6 @@ function onMouseDown(event) {
             if (descriptor && descriptor.object && selectedObjects.includes(descriptor.object)) {
                 const context = CAD.createContext();
                 const cursorPoint = getCursorWorldCoordinates().clone();
-                // Start a fresh OTRACK acquisition session for this grip stretch.
-                if (otrackOn) {
-                    otrackPoints = [];
-                    otrackTool = '__grip__';
-
-                    // Acquire the original object's segment direction(s) at
-                    // the selected grip. The dragged entity is excluded from
-                    // live OSNAP targets, but its original geometry is still
-                    // a valid OTRACK direction reference for this stretch.
-                    if (typeof rememberOtrackPoint === 'function' &&
-                        typeof getSnapData === 'function') {
-                        const gripAnchor = descriptor.point || cursorPoint;
-                        rememberOtrackPoint(
-                            gripAnchor,
-                            [getSnapData(descriptor.object)]
-                        );
-                    }
-                }
-                hideOtrackGuide();
                 selectionGripDrag = {
                     object: descriptor.object,
                     descriptor,
@@ -508,10 +449,6 @@ function onMouseUp(event) {
             notify('Grip edit applied. (Ctrl+Z to undo)');
         }
         if (drag.originalGeometry) drag.originalGeometry.dispose();
-        hideOtrackGuide();
-        hideSnapMarker();
-        otrackPoints = [];
-        otrackTool = null;
         suppressNextClick = true;
         setTimeout(() => { suppressNextClick = false; }, 0);
         return;
@@ -550,6 +487,7 @@ function onMouseUp(event) {
             });
 
             redoStack = [];
+            if (window.SafarEdgeProjectFiles) window.SafarEdgeProjectFiles.markDirty();
 
             notify(`Moved ${drag.objects.length} object(s).`);
 

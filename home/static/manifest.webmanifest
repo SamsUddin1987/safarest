@@ -1,0 +1,22 @@
+{
+  "id": "/",
+  "name": "SAFAR EDGE - CAD & Estimation",
+  "short_name": "SAFAR EDGE",
+  "description": "SAFAR EDGE browser-based CAD, drawing, estimation and spreadsheet workspace.",
+  "start_url": "/cad-workspace/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#121212",
+  "theme_color": "#252526",
+  "file_handlers": [
+    {
+      "action": "/cad-workspace/",
+      "accept": {
+        "application/json": [
+          ".est"
+        ]
+      }
+    }
+  ]
+}

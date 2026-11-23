@@ -31,6 +31,40 @@ def assistant(request):
     return render(request, "assistant.html")
 
 # =========================
+# SAFAR EDGE PWA SERVICE WORKER
+# =========================
+
+def safaredge_service_worker(request):
+
+    worker_path = (
+        Path(settings.BASE_DIR)
+        / "home"
+        / "static"
+        / "service-worker.js"
+    )
+
+    if not worker_path.exists():
+        return HttpResponse(
+            "Service worker file not found.",
+            status=404
+        )
+
+    content = worker_path.read_text(encoding="utf-8")
+
+    response = HttpResponse(
+        content,
+        content_type="application/javascript"
+    )
+
+    # Allow service worker to control the entire website.
+    response["Service-Worker-Allowed"] = "/"
+
+    # Prevent stale service worker scripts.
+    response["Cache-Control"] = "no-cache"
+
+    return response
+
+# =========================
 # UNIFIED ESTIMATION & CAD WORKSPACE
 # =========================
 

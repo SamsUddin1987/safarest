@@ -5,6 +5,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+    <!-- SAFAR EDGE PWA -->
+    <link rel="manifest" href="{% static 'manifest.webmanifest' %}">
+    <meta name="theme-color" content="#252526">
+    <meta name="application-name" content="SAFAR EDGE">
+
     <title>{% block title %}SafarEdge{% endblock %}</title>
 
     <!-- Main stylesheet -->
@@ -289,6 +294,42 @@
     
     <!-- Optional page-specific bottom tabs -->
     {% block bottom_tabs %}{% endblock %}
+
+<!-- SAFAR EDGE SERVICE WORKER REGISTRATION -->
+<script>
+(function () {
+
+    if (!('serviceWorker' in navigator)) {
+        console.info('Service Workers are not supported.');
+        return;
+    }
+
+    window.addEventListener('load', function () {
+
+        navigator.serviceWorker.register('/service-worker.js', {
+            scope: '/'
+        })
+        .then(function (registration) {
+
+            console.info(
+                'SAFAR EDGE Service Worker registered:',
+                registration.scope
+            );
+
+        })
+        .catch(function (error) {
+
+            console.error(
+                'SAFAR EDGE Service Worker registration failed:',
+                error
+            );
+
+        });
+
+    });
+
+})();
+</script>
 
 </body>
 </html>

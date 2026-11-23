@@ -1,5 +1,10 @@
 // 4D. UNDO / REDO  &  ZOOM EXTENTS
 // ==========================================
+function markSafarProjectDirty() {
+    const manager = window.SafarEdgeProjectFiles;
+    if (manager && typeof manager.markDirty === 'function') manager.markDirty();
+}
+
 function addEntity(obj, record = true) {
     if (obj) {
         obj.userData = obj.userData || {};
@@ -14,6 +19,7 @@ function addEntity(obj, record = true) {
     if (record) {
         undoStack.push({ type: 'add', objs: [obj] });
         redoStack = [];
+        markSafarProjectDirty();
     }
 }
 
@@ -22,6 +28,7 @@ function removeEntity(obj) {
     drawnObjects = drawnObjects.filter(o => o !== obj);
     selectedObjects = selectedObjects.filter(o => o !== obj);
     if (hoverObject === obj) hoverObject = null;
+    markSafarProjectDirty();
 }
 
 function undo() {
@@ -63,6 +70,7 @@ function undo() {
         a.objs.forEach(o => addEntity(o, false));
     }
     redoStack.push(a);
+    markSafarProjectDirty();
     notify('Undo.');
 }
 
@@ -89,6 +97,7 @@ function redo() {
         a.objs.forEach(o => removeEntity(o));
     }
     undoStack.push(a);
+    markSafarProjectDirty();
     notify('Redo.');
 }
 

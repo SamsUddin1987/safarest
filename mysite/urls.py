@@ -12,6 +12,9 @@ urlpatterns = [
     # =========================
     # HOME & GENERAL
     # =========================
+
+    path("service-worker.js", views.safaredge_service_worker, name="safaredge_service_worker"),
+
     path("", views.home, name="home"),
     path("about/", views.about, name="about"),
     path("assistant/", views.assistant, name="assistant"),

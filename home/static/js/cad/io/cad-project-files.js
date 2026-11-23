@@ -17,6 +17,21 @@
     let isDirty = false;
     let openInput = null;
 
+    // AutoSave writes directly to the active .est file when the browser
+    // grants write access. Otherwise it keeps a local IndexedDB recovery copy.
+    const RECOVERY_DB_NAME = 'SAFAREDGE_PROJECT_RECOVERY';
+    const RECOVERY_STORE_NAME = 'snapshots';
+    const RECOVERY_KEY = 'active-project';
+    const AUTOSAVE_INTERVAL_KEY = 'safaredge.autosave.intervalSeconds';
+    const DEFAULT_AUTOSAVE_SECONDS = 60;
+    let autoSaveTimer = null;
+    let autoSaveInProgress = false;
+    let isRestoringProject = false;
+    let dirtyVersion = 0;
+    let lastAutoSavedVersion = 0;
+    let recoveryNoticeShown = false;
+    let recoveryDbPromise = null;
+
     function getContext() {
         if (!global.CAD || typeof global.CAD.createContext !== 'function') {
             throw new Error('CAD engine is not initialized.');
@@ -191,13 +206,16 @@
             enableAddRow: true,
             allowCopy: true,
             showtoolbar: true,
-            data: sheets
+            data: sheets,
+            hook: createSpreadsheetHooks()
         });
     }
 
     function loadProjectData(data) {
         validateProject(data);
+        isRestoringProject = true;
 
+        try {
         const context = getContext();
 
         if (
@@ -263,9 +281,17 @@
         restoreSpreadsheet(data.spreadsheet.sheets);
 
         isDirty = false;
+        lastAutoSavedVersion = dirtyVersion;
+        } finally {
+            isRestoringProject = false;
+        }
     }
 
     function downloadProject(data, filename) {
+        const finalName = filename.toLowerCase().endsWith('.est')
+            ? filename
+            : filename + '.est';
+
         const blob = new Blob(
             [JSON.stringify(data, null, 2)],
             { type: 'application/json' }
@@ -275,15 +301,16 @@
         const link = document.createElement('a');
 
         link.href = url;
-        link.download = filename.endsWith('.est')
-            ? filename
-            : filename + '.est';
+        link.download = finalName;
 
         document.body.appendChild(link);
         link.click();
         link.remove();
 
-        URL.revokeObjectURL(url);
+        // Give the browser time to start the download.
+        setTimeout(function () {
+            URL.revokeObjectURL(url);
+        }, 1000);
     }
 
     async function writeToHandle(handle, data) {
@@ -305,20 +332,56 @@
     }
 
     async function saveProject() {
-        const data = buildProjectData();
-
+        // Chrome / Edge: overwrite the currently selected project file.
         if (currentFileHandle) {
+            if (typeof currentFileHandle.queryPermission === 'function') {
+                let permission = await currentFileHandle.queryPermission({ mode: 'readwrite' });
+                if (permission !== 'granted' && typeof currentFileHandle.requestPermission === 'function') {
+                    permission = await currentFileHandle.requestPermission({ mode: 'readwrite' });
+                }
+                if (permission !== 'granted') {
+                    throw new Error('Write permission was not granted for ' + currentFileName + '. Use Save As to choose a writable project file.');
+                }
+            }
+            const data = buildProjectData();
             await writeToHandle(currentFileHandle, data);
             isDirty = false;
+            lastAutoSavedVersion = dirtyVersion;
+            await deleteRecoverySnapshot();
+
+            getContext().notify(
+                'Project saved: ' + currentFileName
+            );
             return;
         }
 
+        // First save in any browser must go through Save As.
+        if (!currentFileName) {
+            return saveProjectAs();
+        }
+
+        // Firefox does not support the File System Access write API.
+        // Save therefore downloads an updated copy using the same filename.
+        if (typeof global.showSaveFilePicker !== 'function') {
+            const data = buildProjectData();
+            downloadProject(data, currentFileName);
+            isDirty = false;
+            lastAutoSavedVersion = dirtyVersion;
+            await deleteRecoverySnapshot();
+
+            getContext().notify(
+                'Updated project download started: ' + currentFileName
+            );
+            return;
+        }
+
+        // If a previously opened/saved handle is unavailable, ask the user
+        // to select a file again rather than silently saving somewhere else.
         return saveProjectAs();
     }
 
     async function saveProjectAs() {
-        const data = buildProjectData();
-
+        // Chrome / Edge: use the native file picker and retain its handle.
         if (typeof global.showSaveFilePicker === 'function') {
             const handle = await global.showSaveFilePicker({
                 suggestedName: currentFileName || 'Untitled.est',
@@ -330,30 +393,49 @@
                 }]
             });
 
-            await writeToHandle(handle, data);
+            const previousHandle = currentFileHandle;
+            const previousName = currentFileName;
 
-            currentFileHandle = handle;
-            currentFileName = handle.name;
-            isDirty = false;
+            try {
+                // Set the candidate name before building project metadata.
+                currentFileName = handle.name;
+                const data = buildProjectData();
+
+                await writeToHandle(handle, data);
+
+                currentFileHandle = handle;
+                currentFileName = handle.name;
+                await persistCurrentFileHandle();
+                isDirty = false;
+                lastAutoSavedVersion = dirtyVersion;
+                await deleteRecoverySnapshot();
+
+                getContext().notify(
+                    'Project saved: ' + currentFileName
+                );
+            } catch (error) {
+                currentFileHandle = previousHandle;
+                currentFileName = previousName;
+                throw error;
+            }
 
             return;
         }
 
-        // Firefox and unsupported-browser fallback.
-        const filename = global.prompt(
-            'Enter project filename:',
-            currentFileName || 'Untitled.est'
-        );
+        // Firefox fallback: initiate a download without a JavaScript prompt.
+        // The browser controls the download folder and any save confirmation.
+        const filename = currentFileName || 'Untitled.est';
+        const data = buildProjectData();
 
-        if (!filename) return;
-
-        const finalName = filename.toLowerCase().endsWith('.est')
-            ? filename
-            : filename + '.est';
-
-        downloadProject(data, finalName);
-        currentFileName = finalName;
+        downloadProject(data, filename);
+        currentFileName = filename;
         isDirty = false;
+        lastAutoSavedVersion = dirtyVersion;
+        await deleteRecoverySnapshot();
+
+        getContext().notify(
+            'Project download started: ' + currentFileName
+        );
     }
 
     async function openProjectFile(file, handle = null) {
@@ -364,12 +446,70 @@
 
         currentFileHandle = handle;
         currentFileName = file.name || handle?.name || 'Untitled.est';
+        if (handle) await persistCurrentFileHandle();
+        else await deletePersistedFileHandle();
 
         isDirty = false;
+        lastAutoSavedVersion = dirtyVersion;
+        await deleteRecoverySnapshot();
 
         global.CAD.createContext().notify(
             `Opened project: ${currentFileName}`
         );
+    }
+
+    // Receive .est files opened from Windows through an installed
+    // Chromium-based SAFAR EDGE PWA (Chrome / Edge desktop).
+    function registerOperatingSystemFileHandler() {
+        if (
+            !('launchQueue' in global) ||
+            typeof global.launchQueue.setConsumer !== 'function'
+        ) {
+            return;
+        }
+
+        global.launchQueue.setConsumer(async function (launchParams) {
+            const handles = launchParams && launchParams.files;
+            if (!handles || !handles.length) return;
+
+            try {
+                // Wait until the CAD and Spreadsheet workspace has completed
+                // its DOMContentLoaded initialization before restoring data.
+                if (document.readyState === 'loading') {
+                    await new Promise(function (resolve) {
+                        document.addEventListener(
+                            'DOMContentLoaded', resolve, { once: true }
+                        );
+                    });
+                }
+
+                if (handles.length !== 1) {
+                    throw new Error(
+                        'Please open one SAFAR EDGE .est project at a time.'
+                    );
+                }
+
+                if (isDirty && !global.confirm(
+                    'Discard unsaved project changes and open the selected file?'
+                )) {
+                    return;
+                }
+
+                const handle = handles[0];
+                if (!handle || handle.kind !== 'file') {
+                    throw new Error('The launched item is not a file.');
+                }
+
+                const file = await handle.getFile();
+                if (!file.name || !file.name.toLowerCase().endsWith('.est')) {
+                    throw new Error('Only SAFAR EDGE .est project files can be opened here.');
+                }
+
+                await openProjectFile(file, handle);
+            } catch (error) {
+                global.alert('Unable to open launched project:\n' + error.message);
+            }
+        });
     }
 
     function getOpenInput() {
@@ -474,12 +614,275 @@
         currentFileHandle = null;
         currentFileName = '';
         isDirty = false;
+        lastAutoSavedVersion = dirtyVersion;
+        deletePersistedFileHandle();
+        deleteRecoverySnapshot();
 
         context.notify('New project created.');
     }
 
     function markDirty() {
+        if (isRestoringProject) return;
         isDirty = true;
+        dirtyVersion += 1;
+    }
+
+    function createSpreadsheetHooks() {
+        const changed = function () { markDirty(); };
+        return {
+            afterChange: function (changes, source) {
+                if (source === 'loadData' || !changes) return;
+                changed();
+            },
+            afterCreateRow: changed,
+            afterCreateCol: changed,
+            afterDeleteRow: changed,
+            afterDeleteCol: changed,
+            afterSheetCreate: changed,
+            afterSheetDelete: changed,
+            afterSheetRename: changed,
+            afterSheetMove: changed,
+            afterSheetColorChange: changed,
+            afterUpdateConfig: changed
+        };
+    }
+
+    function getAutoSaveIntervalSeconds() {
+        try {
+            const value = Number(global.localStorage.getItem(AUTOSAVE_INTERVAL_KEY));
+            if (Number.isFinite(value) && value >= 15 && value <= 600) return Math.round(value);
+        } catch (_) {}
+        return DEFAULT_AUTOSAVE_SECONDS;
+    }
+
+    function setAutoSaveIntervalSeconds(seconds) {
+        const value = Math.round(Number(seconds));
+        if (!Number.isFinite(value) || value < 15 || value > 600) {
+            throw new Error('AutoSave interval must be between 15 and 600 seconds.');
+        }
+        global.localStorage.setItem(AUTOSAVE_INTERVAL_KEY, String(value));
+        startAutoSaveTimer();
+        getContext().notify('AutoSave interval set to ' + value + ' seconds.');
+        return value;
+    }
+
+    function openRecoveryDatabase() {
+        if (!global.indexedDB) return Promise.resolve(null);
+        if (recoveryDbPromise) return recoveryDbPromise;
+        recoveryDbPromise = new Promise(function (resolve, reject) {
+            const request = global.indexedDB.open(RECOVERY_DB_NAME, 1);
+            request.onupgradeneeded = function () {
+                const db = request.result;
+                if (!db.objectStoreNames.contains(RECOVERY_STORE_NAME)) {
+                    db.createObjectStore(RECOVERY_STORE_NAME, { keyPath: 'id' });
+                }
+            };
+            request.onsuccess = function () { resolve(request.result); };
+            request.onerror = function () { reject(request.error || new Error('Could not open local recovery storage.')); };
+        });
+        return recoveryDbPromise;
+    }
+
+    async function getRecoveryRecord(key) {
+        const db = await openRecoveryDatabase();
+        if (!db) return null;
+        return new Promise(function (resolve, reject) {
+            const tx = db.transaction(RECOVERY_STORE_NAME, 'readonly');
+            const request = tx.objectStore(RECOVERY_STORE_NAME).get(key);
+            request.onsuccess = function () { resolve(request.result || null); };
+            request.onerror = function () { reject(request.error || new Error('Could not read local project metadata.')); };
+        });
+    }
+
+    async function persistCurrentFileHandle() {
+        if (!currentFileHandle) return;
+        try {
+            const db = await openRecoveryDatabase();
+            if (!db) return;
+            await new Promise(function (resolve, reject) {
+                const tx = db.transaction(RECOVERY_STORE_NAME, 'readwrite');
+                tx.objectStore(RECOVERY_STORE_NAME).put({
+                    id: 'active-file-handle',
+                    handle: currentFileHandle,
+                    fileName: currentFileName
+                });
+                tx.oncomplete = resolve;
+                tx.onerror = function () { reject(tx.error || new Error('Could not remember the current project file.')); };
+                tx.onabort = function () { reject(tx.error || new Error('Could not remember the current project file.')); };
+            });
+        } catch (error) {
+            // File saving/opening must still succeed if handle persistence is unavailable.
+            console.warn('SAFAR EDGE could not persist the current file handle:', error);
+        }
+    }
+
+    async function restoreCurrentFileHandle() {
+        try {
+            const record = await getRecoveryRecord('active-file-handle');
+            if (!record || !record.handle || record.handle.kind !== 'file') return;
+            currentFileHandle = record.handle;
+            currentFileName = record.fileName || record.handle.name || '';
+        } catch (error) {
+            console.warn('SAFAR EDGE could not restore the saved file handle:', error);
+        }
+    }
+
+    async function deletePersistedFileHandle() {
+        try {
+            const db = await openRecoveryDatabase();
+            if (!db) return;
+            await new Promise(function (resolve, reject) {
+                const tx = db.transaction(RECOVERY_STORE_NAME, 'readwrite');
+                tx.objectStore(RECOVERY_STORE_NAME).delete('active-file-handle');
+                tx.oncomplete = resolve;
+                tx.onerror = function () { reject(tx.error); };
+                tx.onabort = function () { reject(tx.error); };
+            });
+        } catch (error) {
+            console.warn('SAFAR EDGE saved file handle cleanup failed:', error);
+        }
+    }
+
+    async function saveRecoverySnapshot(data) {
+        const db = await openRecoveryDatabase();
+        if (!db) return false;
+        return new Promise(function (resolve, reject) {
+            const tx = db.transaction(RECOVERY_STORE_NAME, 'readwrite');
+            tx.objectStore(RECOVERY_STORE_NAME).put({
+                id: RECOVERY_KEY,
+                savedAt: new Date().toISOString(),
+                fileName: currentFileName || 'Unsaved project',
+                data: data
+            });
+            tx.oncomplete = function () { resolve(true); };
+            tx.onerror = function () { reject(tx.error || new Error('Could not write the local recovery copy.')); };
+            tx.onabort = function () { reject(tx.error || new Error('Local recovery write was cancelled.')); };
+        });
+    }
+
+    async function readRecoverySnapshot() {
+        const db = await openRecoveryDatabase();
+        if (!db) return null;
+        return new Promise(function (resolve, reject) {
+            const tx = db.transaction(RECOVERY_STORE_NAME, 'readonly');
+            const request = tx.objectStore(RECOVERY_STORE_NAME).get(RECOVERY_KEY);
+            request.onsuccess = function () { resolve(request.result || null); };
+            request.onerror = function () { reject(request.error || new Error('Could not read the local recovery copy.')); };
+        });
+    }
+
+    async function deleteRecoverySnapshot() {
+        try {
+            const db = await openRecoveryDatabase();
+            if (!db) return;
+            await new Promise(function (resolve, reject) {
+                const tx = db.transaction(RECOVERY_STORE_NAME, 'readwrite');
+                tx.objectStore(RECOVERY_STORE_NAME).delete(RECOVERY_KEY);
+                tx.oncomplete = resolve;
+                tx.onerror = function () { reject(tx.error); };
+                tx.onabort = function () { reject(tx.error); };
+            });
+            recoveryNoticeShown = false;
+        } catch (error) {
+            console.warn('SAFAR EDGE recovery cleanup failed:', error);
+        }
+    }
+
+    async function autoSaveProject() {
+        if (!isDirty || autoSaveInProgress || dirtyVersion <= lastAutoSavedVersion) return;
+        autoSaveInProgress = true;
+        const versionBeingSaved = dirtyVersion;
+
+        try {
+            const data = buildProjectData();
+
+            // If a project file is open and write permission is already granted,
+            // update that exact .est file. Do not trigger permission prompts in a timer.
+            if (currentFileHandle && typeof currentFileHandle.createWritable === 'function') {
+                let permission = 'granted';
+                if (typeof currentFileHandle.queryPermission === 'function') {
+                    permission = await currentFileHandle.queryPermission({ mode: 'readwrite' });
+                }
+                if (permission === 'granted') {
+                    await writeToHandle(currentFileHandle, data);
+                    lastAutoSavedVersion = versionBeingSaved;
+                    if (dirtyVersion === versionBeingSaved) isDirty = false;
+                    await deleteRecoverySnapshot();
+                    getContext().notify('AutoSaved: ' + currentFileName);
+                    return;
+                }
+            }
+
+            // No file handle / no silent write permission: keep a recovery copy
+            // in this browser's IndexedDB. This is local to this browser profile.
+            const stored = await saveRecoverySnapshot(data);
+            if (stored) {
+                lastAutoSavedVersion = versionBeingSaved;
+                if (!recoveryNoticeShown) {
+                    recoveryNoticeShown = true;
+                    getContext().notify('AutoSave recovery copy stored in this browser. Use Save As to create your .est file.');
+                }
+            }
+        } catch (error) {
+            console.error('SAFAR EDGE AutoSave failed:', error);
+            try { getContext().notify('AutoSave failed: ' + error.message); } catch (_) {}
+        } finally {
+            autoSaveInProgress = false;
+        }
+    }
+
+    function startAutoSaveTimer() {
+        if (autoSaveTimer) global.clearInterval(autoSaveTimer);
+        autoSaveTimer = global.setInterval(autoSaveProject, getAutoSaveIntervalSeconds() * 1000);
+    }
+
+    async function offerRecoveryOnStartup() {
+        try {
+            const snapshot = await readRecoverySnapshot();
+            if (!snapshot || !snapshot.data) return;
+            const when = snapshot.savedAt ? new Date(snapshot.savedAt).toLocaleString() : 'an earlier session';
+            const name = snapshot.fileName || 'Untitled project';
+            if (!global.confirm('A local AutoSave recovery copy was found for "' + name + '" (' + when + ').\n\nRestore it now?')) {
+                await deleteRecoverySnapshot();
+                return;
+            }
+            isRestoringProject = true;
+            try { loadProjectData(snapshot.data); }
+            finally { isRestoringProject = false; }
+            if (!currentFileHandle || currentFileName !== snapshot.fileName) {
+                currentFileHandle = null;
+                currentFileName = '';
+            }
+            isDirty = true;
+            dirtyVersion += 1;
+            lastAutoSavedVersion = dirtyVersion;
+            recoveryNoticeShown = true;
+            getContext().notify('Recovered local AutoSave copy. Use Save As to save it as an .est file.');
+        } catch (error) {
+            console.error('SAFAR EDGE recovery restore failed:', error);
+            global.alert('Unable to restore AutoSave recovery copy: ' + error.message);
+        }
+    }
+
+    function registerProjectShortcuts() {
+        global.addEventListener('keydown', function (event) {
+            if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+            const key = String(event.key || '').toLowerCase();
+            if (key !== 's' && key !== 'o') return;
+            if (!document.getElementById('cad-canvas-container')) return;
+
+            event.preventDefault();
+            event.stopImmediatePropagation();
+
+            const run = key === 'o'
+                ? openProject()
+                : (event.shiftKey ? saveProjectAs() : saveProject());
+            Promise.resolve(run).catch(function (error) {
+                if (error && error.name !== 'AbortError') {
+                    global.alert((key === 'o' ? 'Unable to open project: ' : 'Unable to save project: ') + error.message);
+                }
+            });
+        }, true);
     }
 
     global.SAFAR_EDGE_DEFAULT_DIMENSION_SETTINGS =
@@ -491,6 +894,9 @@
         saveProject,
         saveProjectAs,
         markDirty,
+        getAutoSaveIntervalSeconds,
+        setAutoSaveIntervalSeconds,
+        autoSaveNow: autoSaveProject,
 
         getCurrentFileName: function () {
             return currentFileName;
@@ -500,5 +906,18 @@
             return isDirty;
         }
     };
+
+    // Register project shortcuts before the CAD engine's bubbling key handler.
+    registerProjectShortcuts();
+
+    // Start AutoSave after CAD and Luckysheet have completed initialization.
+    global.addEventListener('load', async function () {
+        await restoreCurrentFileHandle();
+        startAutoSaveTimer();
+        await offerRecoveryOnStartup();
+    }, { once: true });
+
+    // Register the .est operating-system launch receiver when supported.
+    registerOperatingSystemFileHandler();
 
 })(window);

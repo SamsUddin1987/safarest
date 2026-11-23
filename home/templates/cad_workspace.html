@@ -327,6 +327,10 @@
                             Save As
                         </button>
 
+                        <button class="cad-menu-item" id="safar-autosave-interval" onclick="safarSetAutoSaveInterval()">
+                            AutoSave Interval (60 sec)
+                        </button>
+
                         <hr>
 
                         <div class="cad-menu-sub">
@@ -777,7 +781,27 @@ async function safarSaveProjectAs() {
     }
 }
 
+function safarSetAutoSaveInterval() {
+    try {
+        const manager = getSafarProjectManager();
+        const current = manager.getAutoSaveIntervalSeconds();
+        const answer = prompt('Enter AutoSave interval in seconds (15 to 600):', current);
+        if (answer === null) return;
+        const seconds = manager.setAutoSaveIntervalSeconds(answer);
+        const item = document.getElementById('safar-autosave-interval');
+        if (item) item.textContent = 'AutoSave Interval (' + seconds + ' sec)';
+    } catch (error) {
+        alert('Unable to change AutoSave interval:\n' + error.message);
+    }
+}
+
 document.addEventListener("DOMContentLoaded", function() {
+    const autoSaveMenuItem = document.getElementById('safar-autosave-interval');
+    if (autoSaveMenuItem && window.SafarEdgeProjectFiles) {
+        autoSaveMenuItem.textContent = 'AutoSave Interval (' +
+            window.SafarEdgeProjectFiles.getAutoSaveIntervalSeconds() + ' sec)';
+    }
+
     // CAD MAIN MENU CLICK HANDLING
     document.querySelectorAll('.cad-menu-trigger').forEach(function(trigger) {
         trigger.addEventListener('click', function(event) {
@@ -877,7 +901,24 @@ document.addEventListener("DOMContentLoaded", function() {
                 name: "{{ tool_title|escapejs }}",
                 status: 1,
                 celldata: []
-            }]
+            }],
+            hook: {
+                afterChange: function(changes, source) {
+                    if (source !== 'loadData' && changes && window.SafarEdgeProjectFiles) {
+                        window.SafarEdgeProjectFiles.markDirty();
+                    }
+                },
+                afterCreateRow: function() { window.SafarEdgeProjectFiles?.markDirty(); },
+                afterCreateCol: function() { window.SafarEdgeProjectFiles?.markDirty(); },
+                afterDeleteRow: function() { window.SafarEdgeProjectFiles?.markDirty(); },
+                afterDeleteCol: function() { window.SafarEdgeProjectFiles?.markDirty(); },
+                afterSheetCreate: function() { window.SafarEdgeProjectFiles?.markDirty(); },
+                afterSheetDelete: function() { window.SafarEdgeProjectFiles?.markDirty(); },
+                afterSheetRename: function() { window.SafarEdgeProjectFiles?.markDirty(); },
+                afterSheetMove: function() { window.SafarEdgeProjectFiles?.markDirty(); },
+                afterSheetColorChange: function() { window.SafarEdgeProjectFiles?.markDirty(); },
+                afterUpdateConfig: function() { window.SafarEdgeProjectFiles?.markDirty(); }
+            }
         });
 
         const sheetEl = document.getElementById('luckysheet');
