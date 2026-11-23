@@ -12,3 +12,61 @@ body.home-active .content {
     margin: auto;
     text-align: center;
 }
+
+/* =====================================
+   SAFAREST HOME PAGE LOGO PANEL
+   ===================================== */
+
+body.home-active .content {
+    position: relative;
+}
+
+body.home-active .content-inner {
+    position: static;
+}
+
+.safarest-home-logo {
+    position: absolute;
+    left: 4%;
+    top: 36%;
+    width: 32%;
+    max-width: 440px;
+    padding: 12px;
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 8px 25px rgba(0, 30, 70, 0.12);
+    z-index: 2;
+}
+
+.safarest-home-logo img {
+    display: block;
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+
+    /* Blend the black image background into the original gradient */
+    mix-blend-mode: screen;
+}
+
+/* Tablet */
+@media (max-width: 1000px) {
+    .safarest-home-logo {
+        width: 34%;
+        left: 3%;
+        top: 40%;
+    }
+}
+
+/* Mobile */
+@media (max-width: 650px) {
+    .safarest-home-logo {
+        position: relative;
+        left: auto;
+        top: auto;
+        width: min(90%, 340px);
+        margin: 30px auto 15px;
+    }
+}
+

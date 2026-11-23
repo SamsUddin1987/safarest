@@ -353,3 +353,71 @@ body.workspace-fullscreen .app-workspace {
     height: 100vh;
     min-height: 0;
 }
+
+
+/* ==========================================
+   SAFAREST CORPORATE HOME LOGO
+   ========================================== */
+
+body.home-active .content {
+    position: relative;
+}
+
+body.home-active .content-inner {
+    position: static;
+}
+
+body.home-active .safarest-home-logo {
+    position: absolute;
+    left: 4.5%;
+    top: 36%;
+    width: 340px;
+    max-width: 30%;
+    padding: 15px;
+    box-sizing: border-box;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    border-radius: 14px;
+
+    box-shadow: 0 8px 24px rgba(0, 35, 65, 0.12);
+    z-index: 5;
+}
+
+body.home-active .safarest-home-logo img {
+    display: block;
+    width: 100%;
+    max-width: 300px;
+    max-height: 260px;
+    height: auto;
+    object-fit: contain;
+
+    /* Blend the black image background */
+    mix-blend-mode: screen;
+}
+
+/* Tablet */
+@media (max-width: 1000px) {
+    body.home-active .safarest-home-logo {
+        width: 270px;
+        max-width: 32%;
+        left: 3%;
+        top: 40%;
+    }
+}
+
+/* Mobile */
+@media (max-width: 650px) {
+    body.home-active .safarest-home-logo {
+        position: relative;
+        left: auto;
+        top: auto;
+        width: 85%;
+        max-width: 300px;
+        margin: 25px auto;
+    }
+}
