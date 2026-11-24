@@ -1,8 +1,0 @@
-Django
-dj-database-url
-psycopg2-binary
-whitenoise
-pypdf
-pymupdf
-pymupdf4llm
-pdf2docx==0.5.13
