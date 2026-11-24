@@ -9,7 +9,7 @@
 
         <div class="merge-header">
             <h1>PDF to Word Converter</h1>
-            <p>PDF Document Conversion Utility with Multilingual OCR</p>
+            <p>Convert text-based PDF documents into editable Word files.</p>
         </div>
 
         <div class="merge-body">
@@ -29,7 +29,6 @@
                 {% csrf_token %}
 
                 <div class="merge-grid">
-
                     <div class="merge-column">
                         <div class="form-group">
                             <label for="pdf_file">Select PDF File</label>
@@ -41,8 +40,8 @@
                                 required
                             >
                             <p class="merge-help">
-                                Select a digital or scanned PDF document.
-                                Scanned pages will be processed using OCR.
+                                Select a PDF containing selectable text.
+                                Scanned/image-only PDFs are not supported.
                             </p>
                         </div>
                     </div>
@@ -58,32 +57,6 @@
                             </p>
                         </div>
                     </div>
-
-                </div>
-
-                <div class="form-group" style="margin-top:16px;">
-                    <label>OCR Language Selection</label>
-                    <p class="merge-help">
-                        Select every language present in the scanned document.
-                        English is selected by default. For bilingual
-                        documents, select English and the other language.
-                    </p>
-
-                    <div class="merge-status" style="padding:12px;">
-                        <div class="ocr-language-grid">
-                            {% for code, language in ocr_languages.items %}
-                                <label style="display:inline-flex; align-items:center; gap:6px; margin:6px 12px 6px 0;">
-                                    <input
-                                        type="checkbox"
-                                        name="ocr_languages"
-                                        value="{{ code }}"
-                                        {% if code in selected_languages %}checked{% endif %}
-                                    >
-                                    {{ language }}
-                                </label>
-                            {% endfor %}
-                        </div>
-                    </div>
                 </div>
 
                 <div class="form-group" style="margin-top:16px;">
@@ -94,10 +67,7 @@
                 </div>
 
                 <div class="merge-actions">
-                    <span class="merge-help">
-                        Editable Word output | DOCX format
-                    </span>
-
+                    <span class="merge-help">Editable Word output | DOCX format</span>
                     <div class="merge-button-group">
                         <button
                             type="submit"
@@ -106,41 +76,21 @@
                         >
                             Convert to Word &amp; Download
                         </button>
-
-                        <a
-                            href="{% url 'pdf_to_word' %}"
-                            class="btn btn-select"
-                        >
+                        <a href="{% url 'pdf_to_word' %}" class="btn btn-select">
                             Reset
                         </a>
                     </div>
                 </div>
-
             </form>
         </div>
 
         <div class="merge-footer">
             <span>PDF DOCUMENT PROCESSING</span>
-            <span>Multilingual OCR &amp; Word Conversion</span>
+            <span>PDF to Word Conversion</span>
         </div>
 
     </div>
 </div>
-
-<style>
-.ocr-language-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
-    gap: 4px 12px;
-}
-.ocr-language-grid label {
-    font-size: 13px;
-    cursor: pointer;
-}
-.ocr-language-grid input[type="checkbox"] {
-    accent-color: #2563eb;
-}
-</style>
 
 <script>
 (function () {
@@ -152,8 +102,8 @@
 
     fileInput.addEventListener("change", function () {
         selectedFile.replaceChildren();
-
         const file = fileInput.files[0];
+
         if (file) {
             const item = document.createElement("li");
             item.textContent = file.name;
@@ -166,27 +116,15 @@
 
     form.addEventListener("submit", function (event) {
         const file = fileInput.files[0];
-
         if (!file || !file.name.toLowerCase().endsWith(".pdf")) {
             event.preventDefault();
             alert("Please select a valid PDF file.");
             return;
         }
 
-        const selected = form.querySelectorAll(
-            'input[name="ocr_languages"]:checked'
-        );
-
-        if (selected.length === 0) {
-            event.preventDefault();
-            alert("Select at least one OCR language.");
-            return;
-        }
-
         convertButton.disabled = true;
         convertButton.textContent = "Converting...";
-        status.textContent =
-            "Processing PDF and OCR languages. Please wait.";
+        status.textContent = "Converting PDF to Word. Please wait.";
     });
 })();
 </script>
