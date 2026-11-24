@@ -16,6 +16,7 @@ from .utils.pdf_crop import handle_crop_request
 from .utils.pdf_unlock import handle_unlock_request
 from .utils.pdf_lock import handle_lock_request
 from .utils.pdf_shade import handle_shade_request, save_shade_sample
+from .utils.pdf_to_word import handle_pdf_to_word_request
 
 # =========================
 # GENERAL PAGES
@@ -165,6 +166,9 @@ def pdf_lock(request):
 
 def pdf_shade(request):
     return handle_shade_request(request)
+
+def pdf_to_word(request):
+    return handle_pdf_to_word_request(request)
 
 # =========================
 # UTILS

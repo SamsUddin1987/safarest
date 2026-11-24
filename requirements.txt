@@ -5,3 +5,5 @@ whitenoise
 pypdf
 pymupdf
 pymupdf4llm
+pdf2docx==0.5.13
+ocrmypdf>=16.0,<18.0

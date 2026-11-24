@@ -1,0 +1,186 @@
+
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<link rel="stylesheet" href="{% static 'css/pdf.css' %}">
+
+<div class="merge-workspace">
+
+    <div class="merge-panel">
+
+        <div class="merge-header">
+            <h1>PDF to Word Converter</h1>
+            <p>PDF Document Conversion Utility</p>
+        </div>
+
+        <div class="merge-body">
+
+            {% if error %}
+                <p style="color: #c62828; font-size: 12px; margin: 0 0 14px;">
+                    {{ error }}
+                </p>
+            {% endif %}
+
+            <form
+                action="{% url 'pdf_to_word' %}"
+                method="post"
+                enctype="multipart/form-data"
+                id="pdf-to-word-form"
+            >
+
+                {% csrf_token %}
+
+                <div class="merge-grid">
+
+                    <div class="merge-column">
+
+                        <div class="form-group">
+
+                            <label for="pdf_file">
+                                Select PDF File
+                            </label>
+
+                            <input
+                                type="file"
+                                name="pdf_file"
+                                id="pdf_file"
+                                accept=".pdf,application/pdf"
+                                required
+                            >
+
+                            <p class="merge-help">
+                                Select one PDF document for conversion
+                                into an editable Word document.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                    <div class="merge-column">
+
+                        <div class="form-group">
+
+                            <label>Selected PDF File</label>
+
+                            <div class="merge-file-list">
+                                <ol id="selected-file"></ol>
+                            </div>
+
+                            <p class="merge-help">
+                                Verify the selected document before conversion.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <div class="form-group" style="margin-top:16px;">
+
+                    <label>Processing Status</label>
+
+                    <div class="merge-status">
+                        <p id="status">
+                            Ready for conversion.
+                        </p>
+                    </div>
+
+                </div>
+
+                <div class="merge-actions">
+
+                    <span class="merge-help">
+                        Editable Word output | DOCX format
+                    </span>
+
+                    <div class="merge-button-group">
+
+                        <button
+                            type="submit"
+                            class="btn btn-merge"
+                            id="convert-button"
+                        >
+                            Convert to Word &amp; Download
+                        </button>
+
+                        <a
+                            href="{% url 'pdf_to_word' %}"
+                            class="btn btn-select"
+                        >
+                            Reset
+                        </a>
+
+                    </div>
+
+                </div>
+
+            </form>
+
+        </div>
+
+        <div class="merge-footer">
+            <span>PDF DOCUMENT PROCESSING</span>
+            <span>PDF to Word Utility</span>
+        </div>
+
+    </div>
+
+</div>
+
+<script>
+(function () {
+
+    const fileInput = document.getElementById("pdf_file");
+    const selectedFile = document.getElementById("selected-file");
+    const form = document.getElementById("pdf-to-word-form");
+    const convertButton = document.getElementById("convert-button");
+    const status = document.getElementById("status");
+
+    fileInput.addEventListener("change", function () {
+
+        selectedFile.replaceChildren();
+
+        const file = fileInput.files[0];
+
+        if (file) {
+            const item = document.createElement("li");
+            item.textContent = file.name;
+            selectedFile.appendChild(item);
+
+            status.textContent = "1 PDF file selected.";
+        } else {
+            status.textContent = "Ready for conversion.";
+        }
+
+    });
+
+    form.addEventListener("submit", function (event) {
+
+        const file = fileInput.files[0];
+
+        if (!file) {
+            event.preventDefault();
+            alert("Please select a PDF file.");
+            return;
+        }
+
+        if (!file.name.toLowerCase().endsWith(".pdf")) {
+            event.preventDefault();
+            alert("Please select a PDF file only.");
+            return;
+        }
+
+        convertButton.disabled = true;
+        convertButton.textContent = "Converting...";
+        status.textContent =
+            "Converting PDF to editable Word document. Please wait.";
+
+    });
+
+})();
+</script>
+
+{% endblock %}

@@ -53,6 +53,7 @@ urlpatterns = [
     path("pdf/lock/", views.pdf_lock, name="pdf_lock"),
     path("pdf/shade/", views.pdf_shade, name="pdf_shade"),
     path("pdf/save-shade/", views.pdf_save_shade, name="save_shade_sample"),
+    path("pdf/to-word/",views.pdf_to_word,name="pdf_to_word"),
 
     # =========================
     # DOWNLOAD & UTILS
