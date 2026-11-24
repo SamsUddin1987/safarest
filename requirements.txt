@@ -3,5 +3,5 @@ dj-database-url
 psycopg2-binary
 whitenoise
 pypdf
-pymupdf
+pymupdf==1.26.7
 pdf2docx==0.5.13
