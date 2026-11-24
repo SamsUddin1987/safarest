@@ -1,72 +1,195 @@
-body.home-active .content {
-    background-image:
-        radial-gradient(circle at bottom right, #c8f1e1, #77e285, #e49750),
-        url("/static/images/home-bg.webp");
-    background-repeat: no-repeat;
-    background-position: right bottom;
-    background-size: 60%;
-}
 
-.content-inner {
-    max-width: 900px;
-    margin: auto;
-    text-align: center;
-}
-
-/* =====================================
-   SAFAREST HOME PAGE LOGO PANEL
-   ===================================== */
+/* =========================================
+   SAFAREST HOME PAGE
+   ========================================= */
 
 body.home-active .content {
     position: relative;
+    min-height: 100vh;
+    background-image:
+        url("/static/images/home-bg.webp"),
+        radial-gradient(
+            circle at bottom right,
+            #b9e6d5,
+            #d6f1e9,
+            #77e285,
+            #e49750
+        );
+    background-repeat: no-repeat, no-repeat;
+    background-position: right bottom, right bottom;
+    background-size: 60%, 100% 100%;
 }
 
-body.home-active .content-inner {
-    position: static;
-}
+/* Main home page container */
 
-.safarest-home-logo {
-    position: absolute;
-    left: 4%;
-    top: 36%;
-    width: 32%;
-    max-width: 440px;
-    padding: 12px;
+.home-page {
+    width: 100%;
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 35px 30px;
     box-sizing: border-box;
-    border: 1px solid rgba(255, 255, 255, 0.45);
-    border-radius: 16px;
-    background: rgba(255, 255, 255, 0.12);
-    box-shadow: 0 8px 25px rgba(0, 30, 70, 0.12);
-    z-index: 2;
+    text-align: center;
 }
 
-.safarest-home-logo img {
+/* =========================================
+   MULTICOLOUR WELCOME RIBBON
+   ========================================= */
+
+.home-title-ribbon {
+    width: 100%;
+    padding: 20px 15px;
+    margin: 0 auto 35px;
+    box-sizing: border-box;
+
+    background: linear-gradient(
+        110deg,
+        #142d70,
+        #087e9c,
+        #159b78,
+        #e5a52c,
+        #c84b69
+    );
+
+    border-radius: 12px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+
+.home-title-ribbon h1 {
+    margin: 0;
+    color: #ffffff;
+    font-size: clamp(22px, 3vw, 38px);
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-align: center;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.35);
+}
+
+/* =========================================
+   CENTRED BRAND SECTION
+   ========================================= */
+
+.home-brand-stack {
+    width: 40%;
+    display: flex;
+    flex-direction: column;
+    align-items: left;
+    justify-content: center;
+    gap: 15px;
+}
+
+/* Text above logo */
+
+.home-tagline {
+    margin: 0;
+    color: #17365d;
+    font-size: clamp(18px, 2.2vw, 27px);
+    font-weight: 700;
+    text-align: center;
+    text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.7);
+}
+
+/* =========================================
+   CENTRED SAFAREST LOGO
+   ========================================= */
+
+body.home-active .safarest-home-logo {
+    position: relative !important;
+    left: auto !important;
+    top: auto !important;
+
+    width: min(48%, 500px);
+    max-width: 500px;
+    margin: 5px auto;
+
+    padding: 15px;
+    box-sizing: border-box;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    background: rgba(255, 255, 255, 0.20);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    border-radius: 16px;
+
+    box-shadow: 0 8px 25px rgba(0, 30, 70, 0.15);
+}
+
+body.home-active .safarest-home-logo img {
     display: block;
     width: 100%;
+    max-width: 450px;
+    max-height: 350px;
     height: auto;
     object-fit: contain;
-
-    /* Blend the black image background into the original gradient */
     mix-blend-mode: screen;
 }
 
-/* Tablet */
+/* Text below logo */
+
+.home-credit {
+    margin: 5px 0 0;
+    color: #17365d;
+    font-size: clamp(17px, 2vw, 24px);
+    font-weight: 700;
+    text-align: center;
+    font-style: italic;
+}
+
+/* =========================================
+   TABLET
+   ========================================= */
+
 @media (max-width: 1000px) {
-    .safarest-home-logo {
-        width: 34%;
-        left: 3%;
-        top: 40%;
+    .home-page {
+        padding: 30px 20px;
+    }
+
+    body.home-active .safarest-home-logo {
+        width: 60%;
     }
 }
 
-/* Mobile */
+/* =========================================
+   MOBILE
+   ========================================= */
+
 @media (max-width: 650px) {
-    .safarest-home-logo {
-        position: relative;
-        left: auto;
-        top: auto;
-        width: min(90%, 340px);
-        margin: 30px auto 15px;
+    .home-page {
+        padding: 65px 12px 25px;
+    }
+
+    .home-title-ribbon {
+        padding: 16px 10px;
+        margin-bottom: 25px;
+        border-radius: 8px;
+    }
+
+    .home-title-ribbon h1 {
+        font-size: 23px;
+        line-height: 1.35;
+    }
+
+    .home-brand-stack {
+        gap: 12px;
+    }
+
+    .home-tagline {
+        font-size: 19px;
+    }
+
+    body.home-active .safarest-home-logo {
+        width: 90%;
+        max-width: 360px;
+        margin: 5px auto;
+        padding: 10px;
+    }
+
+    body.home-active .safarest-home-logo img {
+        max-height: 260px;
+    }
+
+    .home-credit {
+        font-size: 18px;
     }
 }
-

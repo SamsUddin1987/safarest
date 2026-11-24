@@ -1,21 +1,43 @@
+
 {% extends "base.html" %}
 {% load static %}
 
 {% block body_class %}home-active{% endblock %}
 
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/home.css' %}">
+{% endblock %}
+
 {% block content %}
-<div class="content-inner">
 
-    <h1>Welcome to SafarEst Creative Workspace</h1>
-    <h4>Dedicated to all Civil Engineers</h4>
-    <h4>-By Coding Brothers.</h4>
+<div class="home-page">
 
-    <div class="safarest-home-logo">
-        <img
-            src="{% static 'images/safarest-logo.png' %}"
-            alt="SAFAREST CAD and Spreadsheet"
-        >
+    <!-- Welcome ribbon -->
+    <div class="home-title-ribbon">
+        <h1>Welcome to SafarEst Creative Workspace</h1>
+    </div>
+
+    <!-- Brand introduction -->
+    <div class="home-brand-stack">
+
+        <h3 class="home-tagline">
+            Dedicated to all Civil Engineers
+        </h3>
+
+        <!-- SAFAREST Logo -->
+        <div class="safarest-home-logo">
+            <img
+                src="{% static 'images/safarest-logo.png' %}"
+                alt="SAFAREST CAD and Spreadsheet"
+            >
+        </div>
+
+        <h3 class="home-credit">
+            -By Coding Brothers.
+        </h3>
+
     </div>
 
 </div>
+
 {% endblock %}
