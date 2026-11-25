@@ -117,13 +117,37 @@ const CAD_COMMAND_CATEGORIES = {
     UNITS: 'format'
 };
 
+// Register legacy commands without duplicating commands
+// already registered by dedicated CAD modules.
+
 CAD_COMMANDS.forEach((legacyCommand, index) => {
 
+    // 1. Check whether the command already exists.
+    const existingCommand =
+        CAD.getCommand(legacyCommand.name);
+
+    if (existingCommand) {
+
+        // Reuse the dedicated module's implementation.
+        CAD_COMMANDS[index] = existingCommand;
+
+        return;
+    }
+
+    // 2. Remove aliases already owned by another command.
+    const availableAliases =
+        (legacyCommand.aliases || []).filter(alias => {
+
+            return !CAD.getCommand(alias);
+
+        });
+
+    // 3. Register the command with only available aliases.
     const registeredCommand = CAD.registerCommand({
 
         name: legacyCommand.name,
 
-        aliases: legacyCommand.aliases,
+        aliases: availableAliases,
 
         desc: legacyCommand.desc,
 
@@ -651,50 +675,250 @@ function cmdOsnap() {
 }
 
 function zoomBy(f) {
-    camera.zoom = Math.max(0.05, Math.min(camera.zoom * f, 100));
+    if (window.CADView) {
+        return window.CADView.zoomBy(f);
+    }
+
+    const minZoom = window.CADView ? window.CADView.MIN_ZOOM : 0.000001;
+    const maxZoom = window.CADView ? window.CADView.MAX_ZOOM : 100;
+    camera.zoom = Math.max(minZoom, Math.min(camera.zoom * f, maxZoom));
+
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld(true);
 }
 
 function zoomToWindow(p1, p2) {
-    const w = Math.max(Math.abs(p2.x - p1.x), 1e-6), h = Math.max(Math.abs(p2.y - p1.y), 1e-6);
-    const fit = Math.min((camera.right - camera.left) / w, (camera.top - camera.bottom) / h);
-    camera.zoom = Math.max(0.05, Math.min(fit, 100));
+
+    if (window.CADView) {
+        return window.CADView.zoomToWindow(p1, p2);
+    }
+
+    const w = Math.max(Math.abs(p2.x - p1.x), 1e-6);
+    const h = Math.max(Math.abs(p2.y - p1.y), 1e-6);
+
+    const fit = Math.min(
+        (camera.right - camera.left) / w,
+        (camera.top - camera.bottom) / h
+    );
+
+    const minZoom = window.CADView ? window.CADView.MIN_ZOOM : 0.000001;
+    const maxZoom = window.CADView ? window.CADView.MAX_ZOOM : 100;
+    camera.zoom = Math.max(minZoom, Math.min(fit, maxZoom));
+
     camera.position.x = (p1.x + p2.x) / 2;
     camera.position.y = (p1.y + p2.y) / 2;
+
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld(true);
+
     notify('Zoom Window.');
 }
 
 function cmdZoom() {
+
     startPending({
+
         name: 'ZOOM',
-        prompt: 'ZOOM — [All / Extents / Window / In / Out / nX scale] <real time>:',
+
+        prompt: 'ZOOM — [All / Extents / Window / Previous / Center / In / Out / nX scale] <real time>:',
+
         onText: up => {
+
             let m;
-            if (up === 'E' || up === 'EXT' || up === 'EXTENTS') { pendingCommand = null; zoomExtents(); }
+
+            if (
+                up === 'E' ||
+                up === 'EXT' ||
+                up === 'EXTENTS'
+            ) {
+                pendingCommand = null;
+
+                if (window.cadZoomExtents) {
+                    window.cadZoomExtents();
+                } else {
+                    zoomExtents();
+                }
+            }
+
             else if (up === 'A' || up === 'ALL') {
+
                 pendingCommand = null;
-                camera.position.x = 0; camera.position.y = 0; camera.zoom = 1;
-                camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
-                notify('Zoom All.');
+
+                if (window.cadZoomAll) {
+                    window.cadZoomAll();
+                } else {
+                    zoomExtents();
+                }
             }
-            else if (up === 'W' || up === 'WINDOW') { setTool('zoomw'); }
-            else if (up === 'I' || up === 'IN') { pendingCommand = null; zoomBy(2); notify('Zoom In.'); }
-            else if (up === 'O' || up === 'OUT') { pendingCommand = null; zoomBy(0.5); notify('Zoom Out.'); }
+
+            else if (up === 'W' || up === 'WINDOW') {
+
+                setTool('zoomw');
+
+            }
+
+            else if (up === 'P' || up === 'PREVIOUS') {
+
+                pendingCommand = null;
+
+                if (window.CADView) {
+                    window.CADView.previous();
+                } else {
+                    notify('ZOOM PREVIOUS is not available.');
+                }
+
+            }
+
+            else if (up === 'C' || up === 'CENTER') {
+
+                pendingCommand = null;
+
+                cmdZoomCenter();
+
+            }
+
+            else if (up === 'I' || up === 'IN') {
+
+                pendingCommand = null;
+
+                zoomBy(2);
+
+                notify('Zoom In.');
+
+            }
+
+            else if (up === 'O' || up === 'OUT') {
+
+                pendingCommand = null;
+
+                zoomBy(0.5);
+
+                notify('Zoom Out.');
+
+            }
+
             else if ((m = up.match(/^(\d*\.?\d+)(X)?$/))) {
+
                 pendingCommand = null;
+
                 const n = parseFloat(m[1]);
-                if (n <= 0) { logHistory('Invalid scale.'); return true; }
-                if (m[2]) zoomBy(n); else { camera.zoom = Math.max(0.05, Math.min(n, 100)); camera.updateProjectionMatrix(); camera.updateMatrixWorld(true); }
+
+                if (n <= 0) {
+                    logHistory('Invalid scale. Enter a positive value.');
+                    return true;
+                }
+
+                if (m[2]) {
+
+                    zoomBy(n);
+
+                } else {
+
+                    if (window.CADView) {
+                        window.CADView.capture('zoom-scale', false);
+                    }
+
+                    const minZoom = window.CADView ? window.CADView.MIN_ZOOM : 0.000001;
+                    const maxZoom = window.CADView ? window.CADView.MAX_ZOOM : 100;
+                    camera.zoom = Math.max(minZoom, Math.min(n, maxZoom));
+
+                    camera.updateProjectionMatrix();
+                    camera.updateMatrixWorld(true);
+
+                }
+
                 notify(`Zoom ${m[2] ? 'x' : 'scale '}${n}.`);
+
             }
-            else { logHistory('ZOOM — Invalid option. Use A, E, W, I, O or a scale such as 2X.'); }
+
+            else {
+
+                logHistory(
+                    'ZOOM — Use A, E, W, P, C, I, O or a scale such as 2X.'
+                );
+
+            }
+
             return true;
+
         },
-        onEnter: () => { pendingCommand = null; notify('ZOOM — Use the mouse wheel for real-time zoom.'); }
+
+        onEnter: () => {
+
+            pendingCommand = null;
+
+            notify('ZOOM — Use the mouse wheel for real-time zoom.');
+
+        }
+
     });
+
+}
+
+function cmdZoomCenter() {
+
+    startPending({
+
+        name: 'ZOOM CENTER',
+
+        prompt: 'ZOOM CENTER — Specify center point:',
+
+        onText: raw => {
+
+            const center = parsePointInput(raw, false);
+
+            if (!center) {
+
+                logHistory(
+                    'Enter a valid point, for example 100,50.'
+                );
+
+                return true;
+
+            }
+
+            startPending({
+
+                name: 'ZOOM CENTER HEIGHT',
+
+                prompt: 'ZOOM CENTER — Specify view height:',
+
+                onText: heightText => {
+
+                    const height = Number(heightText);
+
+                    if (!Number.isFinite(height) || height <= 0) {
+
+                        logHistory(
+                            'View height must be a positive number.'
+                        );
+
+                        return true;
+
+                    }
+
+                    pendingCommand = null;
+
+                    if (window.CADView) {
+
+                        window.CADView.zoomCenter(center, height);
+
+                    }
+
+                    notify('Zoom Center.');
+
+                    return true;
+
+                }
+
+            });
+
+            return true;
+
+        }
+
+    });
+
 }
 
 function reportDistance(a, b) {

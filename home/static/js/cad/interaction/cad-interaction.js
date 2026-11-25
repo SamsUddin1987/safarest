@@ -335,12 +335,27 @@ function onMouseDown(event) {
     if (event.button === 1) {
         event.preventDefault();  // stops the browser's auto-scroll circle
         const now = performance.now();
-        if (now - lastMiddleDown < 350) {   // double-click wheel = Zoom Extents
-            lastMiddleDown = 0;
+        if (now - lastMiddleDown < 350) {
+
+        // Double-click middle mouse button = Zoom Extents
+
+        lastMiddleDown = 0;
+
+        if (window.cadZoomExtents) {
+            window.cadZoomExtents();
+        } else {
             zoomExtents();
-            return;
         }
-        lastMiddleDown = now;
+
+        return;
+    }
+
+    lastMiddleDown = now;
+
+    // Save the current view before starting PAN.
+    if (window.CADView) {
+        window.CADView.capture('middle-pan', false);
+    }
         isPanning = true;
         panLastX = event.clientX;
         panLastY = event.clientY;

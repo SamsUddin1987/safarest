@@ -42,8 +42,19 @@ function setTool(toolName, toolOptions = null) {
         case 'id': setCommandPrompt('Command: ID — Specify point:'); break;
         case 'zoomw': setCommandPrompt('Command: ZOOM — Specify first corner:'); break;
         case 'pan':
-            setCommandPrompt('PAN — Hold LEFT mouse button and drag. Press ESC to exit.');
-            if (renderer) renderer.domElement.style.cursor = 'grab';
+
+            if (window.CADView) {
+                window.CADView.capture('pan-command', false);
+            }
+
+            setCommandPrompt(
+                'PAN — Hold LEFT mouse button and drag. Press ESC to exit.'
+            );
+
+            if (renderer) {
+                renderer.domElement.style.cursor = 'grab';
+            }
+
             break;
         case 'select': setCommandPrompt('Command:'); break;
         default: break;

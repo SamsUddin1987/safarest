@@ -27,8 +27,16 @@
 <script src="{% static 'js/cad/interaction/cad-interaction.js' %}"></script>
 <script src="{% static 'js/cad/interaction/cad-snapping.js' %}"></script>
 
-<!-- HISTORY AND COMMAND LINE -->
+<!-- HISTORY AND VIEW NAVIGATION -->
 <script src="{% static 'js/cad/history/cad-history-view.js' %}"></script>
+
+<!-- VIEW NAVIGATION -->
+<script src="{% static 'js/cad/commands/view/view-navigation.js' %}"></script>
+<script src="{% static 'js/cad/commands/view/zoom.js' %}"></script>
+<script src="{% static 'js/cad/commands/view/pan.js' %}"></script>
+<script src="{% static 'js/cad/commands/view/limits.js' %}"></script>
+
+<!-- COMMAND LINE -->
 <script src="{% static 'js/cad/command-line/cad-command-line.js' %}"></script>
 
 <!-- GENERIC CONTROLLER, ENTITIES, KEYBOARD AND IMPORT -->

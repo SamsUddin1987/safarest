@@ -100,35 +100,85 @@ function onKeyDown(event) {
 }
 
 function onMouseWheel(event) {
+
     event.preventDefault();
-    // AutoCAD zooms toward the cursor: keep the world point under the mouse fixed
-    const rect = renderer.domElement.getBoundingClientRect();
-    const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    mouse.x = ndcX; mouse.y = ndcY;
 
-    const halfW = (camera.right - camera.left) / 2;
-    const halfH = (camera.top - camera.bottom) / 2;
-    const oldZoom = camera.zoom;
-    const wx = camera.position.x + (ndcX * halfW) / oldZoom;
-    const wy = camera.position.y + (ndcY * halfH) / oldZoom;
+    if (window.CADView && window.CADView.zoomAt) {
 
-    const zoomFactor = 1.1;
-    let newZoom = event.deltaY < 0 ? oldZoom * zoomFactor : oldZoom / zoomFactor;
-    newZoom = Math.max(0.05, Math.min(newZoom, 100));
-    if (newZoom === oldZoom) return;
+        window.CADView.zoomAt(
+            event.clientX,
+            event.clientY,
+            event.deltaY < 0 ? 1.1 : (1 / 1.1),
+            true
+        );
 
-    camera.zoom = newZoom;
-    camera.position.x = wx - (ndcX * halfW) / newZoom;
-    camera.position.y = wy - (ndcY * halfH) / newZoom;
-    camera.updateProjectionMatrix();
-    camera.updateMatrixWorld(true);
+    } else {
+
+        const rect = renderer.domElement.getBoundingClientRect();
+
+        const ndcX =
+            ((event.clientX - rect.left) / rect.width) * 2 - 1;
+
+        const ndcY =
+            -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+        mouse.x = ndcX;
+        mouse.y = ndcY;
+
+        const halfW = (camera.right - camera.left) / 2;
+        const halfH = (camera.top - camera.bottom) / 2;
+
+        const oldZoom = camera.zoom;
+
+        const wx =
+            camera.position.x + (ndcX * halfW) / oldZoom;
+
+        const wy =
+            camera.position.y + (ndcY * halfH) / oldZoom;
+
+        const minZoom = window.CADView ? window.CADView.MIN_ZOOM : 0.000001;
+        const maxZoom = window.CADView ? window.CADView.MAX_ZOOM : 100;
+        const newZoom = Math.max(
+            minZoom,
+            Math.min(
+                oldZoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1),
+                maxZoom
+            )
+        );
+
+        if (newZoom !== oldZoom) {
+
+            camera.zoom = newZoom;
+
+            camera.position.x =
+                wx - (ndcX * halfW) / newZoom;
+
+            camera.position.y =
+                wy - (ndcY * halfH) / newZoom;
+
+            camera.updateProjectionMatrix();
+            camera.updateMatrixWorld(true);
+
+        }
+
+    }
 
     const pt = getDrawPoint();
 
     const activeTool = CAD.getTool(currentTool);
-    if (activeTool && typeof activeTool.onPreview === 'function') activeTool.onPreview(pt, CAD.createContext());
-    else if (isDrawing && basePoint) updateActiveBufferPreview(pt);
+
+    if (activeTool && typeof activeTool.onPreview === 'function') {
+
+        activeTool.onPreview(pt, CAD.createContext());
+
+    }
+
+    else if (isDrawing && basePoint) {
+
+        updateActiveBufferPreview(pt);
+
+    }
+
 }
 
 function onWindowResize() {
@@ -144,7 +194,15 @@ function onWindowResize() {
     renderer.setSize(container.clientWidth, container.clientHeight);
 }
 
-function resetZoom() { zoomExtents(); }
+function resetZoom() {
+
+    if (window.cadZoomExtents) {
+        window.cadZoomExtents();
+    } else {
+        zoomExtents();
+    }
+
+}
 
 function toggleGrid() {
     if (gridHelper) {

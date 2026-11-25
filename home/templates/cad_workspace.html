@@ -493,14 +493,32 @@
                                 <button class="cad-menu-item" onclick="window.resetZoom()">
                                     Zoom Extents
                                 </button>
-                                <button class="cad-menu-item" disabled>Zoom Window</button>
-                                <button class="cad-menu-item" disabled>Zoom Previous</button>
-                                <button class="cad-menu-item" disabled>Zoom In</button>
-                                <button class="cad-menu-item" disabled>Zoom Out</button>
+                                <button class="cad-menu-item"
+                                        onclick="window.setTool('zoomw')">
+                                    Zoom Window
+                                </button>
+
+                                <button class="cad-menu-item"
+                                        onclick="window.CADView && window.CADView.previous()">
+                                    Zoom Previous
+                                </button>
+
+                                <button class="cad-menu-item"
+                                        onclick="window.CADView && window.CADView.zoomBy(2)">
+                                    Zoom In
+                                </button>
+
+                                <button class="cad-menu-item"
+                                        onclick="window.CADView && window.CADView.zoomBy(0.5)">
+                                    Zoom Out
+                                </button>
                             </div>
                         </div>
 
-                        <button class="cad-menu-item" disabled>Pan</button>
+                        <button class="cad-menu-item"
+                                onclick="window.runCADCommand('PAN')">
+                            Pan
+                        </button>
                         <button class="cad-menu-item" onclick="window.runCADCommand('TOP')">Top / Plan View</button>
 
                         <hr>
@@ -713,15 +731,21 @@
 <!-- HISTORY -->
 <script src="{% static 'js/cad/history/cad-history-view.js' %}?v=20261123-5"></script>
 
+<!-- VIEW NAVIGATION -->
+<script src="{% static 'js/cad/commands/view/view-navigation.js' %}?v=20261125-3"></script>
+<script src="{% static 'js/cad/commands/view/zoom.js' %}?v=20261125-3"></script>
+<script src="{% static 'js/cad/commands/view/pan.js' %}?v=20261124-1"></script>
+<script src="{% static 'js/cad/commands/view/limits.js' %}?v=20261124-1"></script>
+
 <!-- COMMAND LINE -->
-<script src="{% static 'js/cad/command-line/cad-command-line.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/command-line/cad-command-line.js' %}?v=20261125-3"></script>
 
 <!-- EXISTING TOOLS AND ENTITIES -->
 <script src="{% static 'js/cad/cad-tools.js' %}?v=20261123-5"></script>
 <script src="{% static 'js/cad/entities/cad-entities.js' %}?v=20261123-5"></script>
 
 <!-- KEYBOARD AND IMPORT -->
-<script src="{% static 'js/cad/interaction/cad-keyboard.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/interaction/cad-keyboard.js' %}?v=20261125-3"></script>
 <script src="{% static 'js/cad/io/cad-import.js' %}?v=20261123-5"></script>
 
 <!-- NATIVE PROJECT FILE SYSTEM -->

@@ -133,7 +133,9 @@ function zoomExtents() {
         });
         const w = Math.max(maxX - minX, 1), h = Math.max(maxY - minY, 1);
         const fitZoom = Math.min((camera.right - camera.left) / (w * 1.1), (camera.top - camera.bottom) / (h * 1.1));
-        camera.zoom = Math.max(0.05, Math.min(fitZoom, 100));
+        const minZoom = window.CADView ? window.CADView.MIN_ZOOM : 0.000001;
+        const maxZoom = window.CADView ? window.CADView.MAX_ZOOM : 100;
+        camera.zoom = Math.max(minZoom, Math.min(fitZoom, maxZoom));
         camera.position.x = (minX + maxX) / 2;
         camera.position.y = (minY + maxY) / 2;
     }
