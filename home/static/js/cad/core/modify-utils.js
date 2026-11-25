@@ -215,16 +215,58 @@
         return setGeometryPoints(target, remainingPoints);
     }
 
+    function setExtendedGeometry(target, points) {
+        if (!target || !target.geometry || !Array.isArray(points) || points.length < 2) {
+            return false;
+        }
+
+        const originalType = target.userData && target.userData.type;
+        const nextGeometry = new THREE.BufferGeometry().setFromPoints(points);
+        nextGeometry.computeBoundingSphere();
+
+        target.geometry.dispose();
+        target.geometry = nextGeometry;
+
+        if (!target.userData) target.userData = {};
+
+        // A LINE remains a LINE. A POLYLINE remains a POLYLINE. A rectangle
+        // whose vertex is extended is no longer a closed rectangle entity;
+        // retain its edited vertices as a regular polyline.
+        if (originalType === 'rect') {
+            target.userData.type = 'polyline';
+        } else if (originalType === 'line') {
+            target.userData.type = 'line';
+        } else {
+            target.userData.type = 'polyline';
+        }
+
+        target.userData.points = points.map(point => ({
+            x: point.x,
+            y: point.y,
+            z: point.z || 0
+        }));
+
+        return true;
+    }
+
     function extendAt(context, target, clickPoint, boundaries, pickTolerance) {
         const points = pointFromGeometry(target);
         if (points.length < 2) return false;
 
-        const boundarySegments = segments(boundaries);
+        // Ignore the target itself and stale/deleted boundary references.
+        const liveObjects = context.getObjects();
+        const validBoundaries = (boundaries || []).filter(object =>
+            object && object !== target && liveObjects.includes(object)
+        );
+        if (!validBoundaries.length) return false;
+
+        const boundarySegments = segments(validBoundaries);
+        if (!boundarySegments.length) return false;
+
         let nodeIndex = 0;
         let nodeDistance = Infinity;
 
-        // EXTEND now works from every vertex/grip, including internal polyline
-        // nodes. The clicked node is moved to the nearest valid boundary hit.
+        // Select the closest editable vertex to the double-click location.
         points.forEach((vertex, index) => {
             const distance = vertex.distanceTo(clickPoint);
             if (distance < nodeDistance) {
@@ -233,25 +275,20 @@
             }
         });
 
-        if (pickTolerance !== undefined && nodeDistance > pickTolerance) return false;
+        if (pickTolerance !== undefined && nodeDistance > pickTolerance) {
+            return false;
+        }
 
         const candidates = [];
         if (nodeIndex > 0) {
-            candidates.push({
-                fixed: points[nodeIndex - 1],
-                end: points[nodeIndex],
-                index: nodeIndex
-            });
+            candidates.push({ fixed: points[nodeIndex - 1], end: points[nodeIndex] });
         }
         if (nodeIndex < points.length - 1) {
-            candidates.push({
-                fixed: points[nodeIndex + 1],
-                end: points[nodeIndex],
-                index: nodeIndex
-            });
+            candidates.push({ fixed: points[nodeIndex + 1], end: points[nodeIndex] });
         }
 
         let bestHit = null;
+
         candidates.forEach(candidate => {
             const dx = candidate.end.x - candidate.fixed.x;
             const dy = candidate.end.y - candidate.fixed.y;
@@ -259,32 +296,47 @@
             if (length < 1e-10) return;
 
             const direction = new THREE.Vector3(dx / length, dy / length, 0);
-            const farPoint = candidate.end.clone().add(
+            const rayEnd = candidate.end.clone().add(
                 direction.clone().multiplyScalar(1e9)
             );
-            const currentDistance = candidate.end.clone()
+            const currentLength = candidate.end.clone()
                 .sub(candidate.fixed)
                 .dot(direction);
 
             boundarySegments.forEach(segment => {
-                const hit = intersect(candidate.fixed, farPoint, segment.a, segment.b);
+                const hit = intersect(
+                    candidate.fixed,
+                    rayEnd,
+                    segment.a,
+                    segment.b
+                );
                 if (!hit) return;
 
-                const distance = hit.point.clone()
+                const along = hit.point.clone()
                     .sub(candidate.fixed)
                     .dot(direction);
-                if (distance <= currentDistance + 1e-8) return;
 
-                const nodeToHit = hit.point.distanceTo(candidate.end);
-                if (!bestHit || nodeToHit < bestHit.nodeToHit) {
-                    bestHit = { point: hit.point, nodeToHit };
+                // The boundary must be strictly beyond the current endpoint.
+                if (along <= currentLength + 1e-8) return;
+
+                const extensionDistance = along - currentLength;
+
+                // EXTEND must reach the farthest valid selected boundary.
+                // This deliberately ignores nearer intermediate barriers and
+                // chooses the greatest forward intersection on the same ray.
+                if (!bestHit || extensionDistance > bestHit.extensionDistance) {
+                    bestHit = {
+                        point: hit.point.clone(),
+                        extensionDistance
+                    };
                 }
             });
         });
 
         if (!bestHit) return false;
+
         points[nodeIndex] = bestHit.point;
-        return setGeometryPoints(target, points);
+        return setExtendedGeometry(target, points);
     }
 
     global.CADModifyUtils = {

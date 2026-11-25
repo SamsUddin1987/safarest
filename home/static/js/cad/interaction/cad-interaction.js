@@ -1,6 +1,84 @@
 // 4. MULTI-SELECTION & MOUSE INTERACTION
 // ==========================================
 
+// AutoCAD-style rollover highlighting. Hover is deliberately different from
+// persistent selection: orange = rollover, cyan = selected. Store each
+// material's original colour so grouped entities and material arrays restore
+// correctly after the pointer leaves.
+const cadOriginalMaterialColors = new WeakMap();
+
+function forEachCadMaterial(object, callback) {
+    if (!object || typeof callback !== 'function') return;
+    const visit = node => {
+        const materials = Array.isArray(node.material)
+            ? node.material
+            : (node.material ? [node.material] : []);
+        materials.forEach(material => {
+            if (material && material.color &&
+                typeof material.color.setHex === 'function') {
+                callback(material);
+            }
+        });
+    };
+    if (typeof object.traverse === 'function') object.traverse(visit);
+    else visit(object);
+}
+
+function applyCadObjectVisualState(object, state) {
+    if (!object) return;
+    forEachCadMaterial(object, material => {
+        if (!cadOriginalMaterialColors.has(material)) {
+            cadOriginalMaterialColors.set(material, material.color.clone());
+        }
+        if (state === 'selected') {
+            material.color.setHex(0x00ffff); // persistent selection: cyan
+        } else if (state === 'hover') {
+            material.color.setHex(0xffa500); // rollover: amber/orange
+        } else {
+            material.color.copy(cadOriginalMaterialColors.get(material));
+        }
+    });
+}
+
+function resolveTopLevelCadEntity(object) {
+    while (object && !drawnObjects.includes(object)) {
+        object = object.parent;
+    }
+    return object || null;
+}
+
+function updateCadRolloverHighlight() {
+    // PAN and active drags should not produce object rollover. All other
+    // commands (including EXTEND/TRIM/MOVE/COPY and drawing tools) do.
+    if (currentTool === 'pan' || isPanning || selectionGripDrag || objectDrag) {
+        clearHover();
+        return;
+    }
+
+    raycaster.setFromCamera(mouse, camera);
+    const pickable = drawnObjects.filter(object =>
+        !(object.userData && object.userData.layerLocked)
+    );
+    const hits = raycaster.intersectObjects(pickable, true);
+    let nextHover = null;
+
+    for (const hit of hits) {
+        const candidate = resolveTopLevelCadEntity(hit.object);
+        if (candidate && !(candidate.userData && candidate.userData.layerLocked)) {
+            nextHover = candidate;
+            break;
+        }
+    }
+
+    if (nextHover === hoverObject) return;
+    clearHover();
+    hoverObject = nextHover;
+
+    if (hoverObject && !selectedObjects.includes(hoverObject)) {
+        applyCadObjectVisualState(hoverObject, 'hover');
+    }
+}
+
 function onMouseMove(event) {
     const rect = renderer.domElement.getBoundingClientRect();
 
@@ -73,14 +151,49 @@ function onMouseMove(event) {
                 gripPoint.set(snap.x, snap.y, 0);
                 currentSnap = snap;
                 showSnapMarker(snap);
+                if (otrackOn) updateOtrackAcquisition(snap, snapItems);
+                hideOtrackGuide();
             } else {
                 currentSnap = null;
                 hideSnapMarker();
+                cancelOtrackAcquisition();
             }
         }
-        if (gridSnapOn) {
+
+        // Object tracking is the next priority after an exact OSNAP solution.
+        // It is available while dragging a selected vertex/centre grip.
+        let gripOtrackActive = false;
+        if (!currentSnap && otrackOn) {
+            const tracked = computeOtrackPoint(gripPoint);
+            if (tracked) {
+                gripPoint.set(tracked.x, tracked.y, 0);
+                showOtrackGuide(
+                    tracked.anchor,
+                    gripPoint,
+                    tracked.axis,
+                    tracked.direction,
+                    tracked
+                );
+                gripOtrackActive = true;
+            } else {
+                hideOtrackGuide();
+            }
+        }
+
+        if (gridSnapOn && !gripOtrackActive && !currentSnap) {
             gripPoint.x = Math.round(gripPoint.x / GRID_SPACING) * GRID_SPACING;
             gripPoint.y = Math.round(gripPoint.y / GRID_SPACING) * GRID_SPACING;
+        }
+
+        // ORTHO also constrains vertex/centre grip edits (STRETCH-style).
+        if (orthoOn && drag.startPoint) {
+            const dx = gripPoint.x - drag.startPoint.x;
+            const dy = gripPoint.y - drag.startPoint.y;
+            if (Math.abs(dx) >= Math.abs(dy)) {
+                gripPoint.y = drag.startPoint.y;
+            } else {
+                gripPoint.x = drag.startPoint.x;
+            }
         }
 
         if (gripPoint.distanceTo(drag.startPoint) > 1e-7) {
@@ -135,31 +248,10 @@ function onMouseMove(event) {
         return;
     }
 
-    // HOVER EFFECT
-    if (currentTool === 'select' || currentTool === 'erase') {
-
-        raycaster.setFromCamera(mouse, camera);
-
-        const intersects =
-            raycaster.intersectObjects(drawnObjects.filter(o => !(o.userData && o.userData.layerLocked)), true);
-
-        if (intersects.length > 0) {
-
-            if (hoverObject !== intersects[0].object) {
-
-                clearHover();
-
-                hoverObject = intersects[0].object;
-
-                if (!selectedObjects.includes(hoverObject)) {
-                    hoverObject.material.color.setHex(0x00ffff);
-                }
-            }
-
-        } else {
-            clearHover();
-        }
-    }
+    // AutoCAD-style rollover highlight is available during idle selection
+    // and while commands request an entity pick. It resolves child meshes to
+    // their owning CAD entity and uses a distinct colour from selection.
+    updateCadRolloverHighlight();
 
     const activeTool = CAD.getTool(currentTool);
     if (activeTool && typeof activeTool.onPreview === 'function') {
@@ -179,25 +271,23 @@ function onMouseMove(event) {
 }
 
 function clearHover() {
-    if (hoverObject && !selectedObjects.includes(hoverObject)) {
-        hoverObject.material.color.setHex(hoverObject.userData.originalColor || 0xffffff);
-        hoverObject = null;
-    }
+    if (!hoverObject) return;
+    const previous = hoverObject;
+    hoverObject = null;
+    applyCadObjectVisualState(
+        previous,
+        selectedObjects.includes(previous) ? 'selected' : 'normal'
+    );
 }
 
-// Keep selection highlighting consistent for both single-click and
-// window/crossing selection. Some CAD entities use a material array.
+// Keep selection highlighting consistent for simple clicks, window/crossing
+// selection, and grouped entities containing child meshes.
 function setCadObjectSelectedState(obj, selected) {
     if (!obj) return;
-    const materials = Array.isArray(obj.material)
-        ? obj.material
-        : (obj.material ? [obj.material] : []);
-    const color = selected ? 0x00ffff : ((obj.userData && obj.userData.originalColor) || 0xffffff);
-    materials.forEach(material => {
-        if (material && material.color && typeof material.color.setHex === 'function') {
-            material.color.setHex(color);
-        }
-    });
+    applyCadObjectVisualState(
+        obj,
+        selected ? 'selected' : (hoverObject === obj ? 'hover' : 'normal')
+    );
 }
 
 function clearSelection() {
@@ -312,7 +402,7 @@ function onCanvasClick(event) {
 
     if (currentTool === 'select' || currentTool === 'pan') return;  // empty click in SELECT must not start a draw
 
-    handleToolClick(pt);
+    handleToolClick(pt, event);
 }
 
 // ==========================================

@@ -11,6 +11,16 @@ function setTool(toolName, toolOptions = null) {
     if (ae && ae.classList && ae.classList.contains('cad-tool-btn')) ae.blur();
 
     currentTool = toolName;
+
+    // AutoCAD-style grips are hidden while a command is active (EXTEND,
+    // MOVE, TRIM, etc.) and restored when returning to idle selection.
+    if (typeof selectionGripGroup !== 'undefined' && selectionGripGroup) {
+        selectionGripGroup.visible = toolName === 'select';
+    }
+    if (toolName === 'select' && typeof updateSelectionGrips === 'function') {
+        updateSelectionGrips();
+    }
+
     if (toolName !== 'select') pendingCommand = null;
     if (TOOL_TO_CMD[toolName]) lastCommandName = TOOL_TO_CMD[toolName];
     lineChainStart = null;
@@ -96,7 +106,7 @@ function translateCadObjects(objects, dx, dy) {
     });
 }
 
-function handleToolClick(pt) {
+function handleToolClick(pt, event = null) {
 
     // =========================================
     // INDEPENDENT DRAW COMMAND DISPATCHER
@@ -124,7 +134,7 @@ function handleToolClick(pt) {
         typeof activeDrawTool.onClick === 'function'
     ) {
         try {
-            activeDrawTool.onClick(pt, CAD.createContext());
+            activeDrawTool.onClick(pt, CAD.createContext(), event);
         } catch (error) {
             console.error(`[SAFAR EDGE CAD] ${currentTool} click failed:`, error);
             setCommandPrompt(`${String(currentTool).toUpperCase()} error: ${error.message}`);

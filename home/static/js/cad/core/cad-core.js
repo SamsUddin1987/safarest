@@ -183,7 +183,10 @@ function initCADViewer() {
     const domEl = renderer.domElement;
     domEl.addEventListener('mousedown', onMouseDown);
     domEl.addEventListener('mousemove', onMouseMove);
-    domEl.addEventListener('mouseleave', hideSnapMarker);
+    domEl.addEventListener('mouseleave', () => {
+        clearHover();
+        hideSnapMarker();
+    });
     window.addEventListener('mouseup', onMouseUp);
     domEl.addEventListener('click', onCanvasClick);
     domEl.addEventListener('wheel', onMouseWheel, { passive: false });
@@ -225,12 +228,30 @@ function getSelectionGripDescriptors(object) {
     // Dimensions are editable through DIMEDIT/DIMSTYLE rather than vertex grips.
     if (data.type === 'dimension' || data.type === 'solid') return descriptors;
 
-    // Circle centre grip: dragging it translates the complete circle.
+    // Circle grips follow conventional CAD behaviour:
+    // - centre grip moves the complete circle;
+    // - four quadrant grips change the radius while keeping the entity circular.
     if (data.type === 'circle' && data.center) {
         const center = data.center.isVector3
             ? data.center.clone()
             : new THREE.Vector3(data.center.x, data.center.y, data.center.z || 0);
-        return [{ object, kind: 'circle-center', index: 0, point: center }];
+        const radius = Math.max(Number(data.radius) || 0, 0);
+        const z = center.z || 0;
+
+        const grips = [
+            { object, kind: 'circle-center', index: 0, point: center.clone() }
+        ];
+
+        if (radius > 1e-10) {
+            grips.push(
+                { object, kind: 'circle-radius', index: 1, direction: 'east', point: new THREE.Vector3(center.x + radius, center.y, z) },
+                { object, kind: 'circle-radius', index: 2, direction: 'north', point: new THREE.Vector3(center.x, center.y + radius, z) },
+                { object, kind: 'circle-radius', index: 3, direction: 'west', point: new THREE.Vector3(center.x - radius, center.y, z) },
+                { object, kind: 'circle-radius', index: 4, direction: 'south', point: new THREE.Vector3(center.x, center.y - radius, z) }
+            );
+        }
+
+        return grips;
     }
 
     // Every stored polyline/rectangle vertex gets an editable grip.
@@ -292,6 +313,11 @@ function updateSelectionGrips() {
     if (!scene || !camera || !renderer || !THREE) return;
     const group = ensureSelectionGripGroup();
     if (!group) return;
+
+    // Selection grips are shown only in idle SELECT mode. During commands
+    // such as EXTEND they are hidden, while entity rollover/selection colour
+    // remains visible. This avoids confusing blue vertex nodes in command mode.
+    group.visible = currentTool === 'select';
 
     const desired = [];
     selectedObjects.forEach(object => {
@@ -358,6 +384,47 @@ function applySelectionGripPoint(drag, worldPoint) {
             center.y += worldPoint.y - drag.startPoint.y;
             center.z = (center.z || 0) + worldPoint.z - drag.startPoint.z;
         }
+    } else if (drag.descriptor.kind === 'circle-radius') {
+        // Resize the circle uniformly from its centre. Never distort it into
+        // an ellipse, and always rebuild from the original mouse-down geometry.
+        const centerData = object.userData.center;
+        const originalRadius = Number(drag.originalUserData && drag.originalUserData.radius);
+        const attribute = object.geometry && object.geometry.getAttribute('position');
+
+        if (!centerData || !attribute || !Number.isFinite(originalRadius) || originalRadius <= 1e-10) {
+            return;
+        }
+
+        const centerWorld = centerData.isVector3
+            ? centerData.clone()
+            : new THREE.Vector3(centerData.x, centerData.y, centerData.z || 0);
+        const centerLocal = centerWorld.applyMatrix4(inverse);
+        const newRadius = Math.hypot(
+            localPoint.x - centerLocal.x,
+            localPoint.y - centerLocal.y
+        );
+
+        // Prevent a zero-radius entity, which would be invisible and difficult
+        // to select. The lower bound is intentionally tiny relative to drawing units.
+        if (!Number.isFinite(newRadius) || newRadius <= 1e-8) return;
+
+        const scale = newRadius / originalRadius;
+        const sourceAttribute = drag.originalGeometry.getAttribute('position');
+
+        for (let i = 0; i < attribute.count; i++) {
+            const x = sourceAttribute.getX(i);
+            const y = sourceAttribute.getY(i);
+            const z = sourceAttribute.getZ(i);
+            attribute.setXYZ(
+                i,
+                centerLocal.x + (x - centerLocal.x) * scale,
+                centerLocal.y + (y - centerLocal.y) * scale,
+                z
+            );
+        }
+
+        attribute.needsUpdate = true;
+        object.userData.radius = newRadius;
     } else {
         const attribute = object.geometry.getAttribute('position');
         const index = drag.descriptor.index;

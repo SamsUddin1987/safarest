@@ -1,6 +1,58 @@
 // 4C. OSNAP (OBJECT SNAP), ORTHO, GRID SNAP
 // ==========================================
 
+// OTRACK acquires an object-snap reference only after a deliberate hover.
+// This avoids collecting every snap point crossed by a moving cursor.
+let otrackAcquireTimer = null;
+let otrackAcquireCandidate = null;
+const OTRACK_ACQUIRE_DELAY_MS = 350;
+const OTRACK_ACQUIRE_APERTURE_PX = 5;
+
+function cancelOtrackAcquisition() {
+    if (otrackAcquireTimer !== null) {
+        clearTimeout(otrackAcquireTimer);
+        otrackAcquireTimer = null;
+    }
+    otrackAcquireCandidate = null;
+}
+
+function updateOtrackAcquisition(snap, items = []) {
+    if (!otrackOn || !osnapOn || !snap) {
+        cancelOtrackAcquisition();
+        return;
+    }
+
+    const allowedTypes = new Set([
+        'endpoint', 'midpoint', 'intersection', 'node',
+        'center', 'quadrant'
+    ]);
+    if (!allowedTypes.has(snap.type)) {
+        cancelOtrackAcquisition();
+        return;
+    }
+
+    const tolerance = OTRACK_ACQUIRE_APERTURE_PX * worldPerPixel();
+    const sameCandidate = otrackAcquireCandidate &&
+        otrackAcquireCandidate.type === snap.type &&
+        Math.hypot(otrackAcquireCandidate.x - snap.x, otrackAcquireCandidate.y - snap.y) <= tolerance;
+
+    if (sameCandidate) return;
+
+    cancelOtrackAcquisition();
+    otrackAcquireCandidate = {
+        x: snap.x, y: snap.y, type: snap.type,
+        snap: { ...snap },
+        items
+    };
+
+    const candidate = otrackAcquireCandidate;
+    otrackAcquireTimer = setTimeout(() => {
+        if (otrackAcquireCandidate !== candidate || !otrackOn) return;
+        rememberOtrackPoint(candidate.snap, candidate.items);
+        otrackAcquireTimer = null;
+    }, OTRACK_ACQUIRE_DELAY_MS);
+}
+
 // --- pure geometry helpers (world units) ---
 function closestOnSeg(p, a, b) {
     const dx = b.x - a.x, dy = b.y - a.y;
@@ -227,24 +279,56 @@ function worldToScreen(x, y) {
 }
 
 // The point a drawing command should use: OSNAP > OTRACK > GRID/ORTHO > raw cursor.
+function constrainPointToOrtho(point, origin) {
+    if (!orthoOn || !point || !origin) return point;
+
+    const dx = point.x - origin.x;
+    const dy = point.y - origin.y;
+
+    if (Math.abs(dx) >= Math.abs(dy)) {
+        point.y = origin.y;
+    } else {
+        point.x = origin.x;
+    }
+    return point;
+}
+
 function getDrawPoint() {
     const pt = getCursorWorldCoordinates().clone();
     currentSnap = null;
 
     if (currentTool === 'select') {
-        hideSnapMarker();
         hideOtrackGuide();
-        // Grip dragging has its own OTRACK path in cad-interaction.js.
-        // In ordinary SELECT mode, clear old acquired points.
-        const gripIsActive = typeof selectionGripDrag !== 'undefined' && !!selectionGripDrag;
-        if (!gripIsActive) {
-            otrackPoints = [];
-            otrackTool = null;
+
+        // In SELECT mode, hovering an enabled object-snap point may acquire
+        // an OTRACK reference for subsequent grip editing. Acquisition is
+        // deliberate (350 ms dwell), not triggered by simply crossing it.
+        if (otrackOn && osnapOn) {
+            const selectItems = drawnObjects.map(getSnapData);
+            const snap = computeOsnap(
+                selectItems,
+                pt,
+                null,
+                OSNAP_APERTURE_PX * worldPerPixel(),
+                osnapModes
+            );
+            if (snap) {
+                currentSnap = snap;
+                showSnapMarker(snap);
+                updateOtrackAcquisition(snap, selectItems);
+            } else {
+                hideSnapMarker();
+                cancelOtrackAcquisition();
+            }
+        } else {
+            hideSnapMarker();
+            cancelOtrackAcquisition();
         }
         return pt;
     }
 
     if (otrackTool !== currentTool) {
+        cancelOtrackAcquisition();
         otrackPoints = [];
         otrackTool = currentTool;
     }
@@ -267,20 +351,29 @@ function getDrawPoint() {
         if (snap) {
             currentSnap = snap;
             showSnapMarker(snap);
-            if (otrackOn) rememberOtrackPoint(snap, snapItems);
+            if (otrackOn) updateOtrackAcquisition(snap, snapItems);
             hideOtrackGuide();
             pt.set(snap.x, snap.y, 0);
+            if (orthoOn && isDrawing && basePoint &&
+                ['line', 'polyline', 'move', 'copy'].includes(currentTool)) {
+                constrainPointToOrtho(pt, basePoint);
+            }
             return pt;
         }
     }
 
     hideSnapMarker();
+    cancelOtrackAcquisition();
 
     if (otrackOn) {
         const tracked = computeOtrackPoint(pt);
         if (tracked) {
             pt.set(tracked.x, tracked.y, 0);
             showOtrackGuide(tracked.anchor, pt, tracked.axis, tracked.direction, tracked);
+            if (orthoOn && isDrawing && basePoint &&
+                ['line', 'polyline', 'move', 'copy'].includes(currentTool)) {
+                constrainPointToOrtho(pt, basePoint);
+            }
             return pt;
         }
     }
@@ -293,12 +386,8 @@ function getDrawPoint() {
     }
 
     if (orthoOn && isDrawing && basePoint &&
-        (currentTool === 'line' || currentTool === 'polyline')) {
-        if (Math.abs(pt.x - basePoint.x) >= Math.abs(pt.y - basePoint.y)) {
-            pt.y = basePoint.y;
-        } else {
-            pt.x = basePoint.x;
-        }
+        ['line', 'polyline', 'move', 'copy'].includes(currentTool)) {
+        constrainPointToOrtho(pt, basePoint);
     }
 
     return pt;
@@ -309,12 +398,11 @@ function getDrawPoint() {
 function rememberOtrackPoint(s, items = []) {
     if (!s || !Number.isFinite(s.x) || !Number.isFinite(s.y)) return;
 
-    // OSNAP modes remain available for normal placement, but only deliberate
-    // geometric reference points should seed OTRACK. Midpoint, perpendicular
-    // and nearest are transient cursor solutions and create clutter when
-    // acquired continuously while the pointer moves.
+    // Stable geometric reference points can seed OTRACK. Perpendicular and
+    // nearest are cursor-dependent solutions, so they are not persistent
+    // tracking references. Midpoints are valid deliberate acquisition points.
     const trackableSnapTypes = new Set([
-        'endpoint', 'intersection', 'node', 'center', 'quadrant'
+        'endpoint', 'midpoint', 'intersection', 'node', 'center', 'quadrant'
     ]);
     if (!trackableSnapTypes.has(s.type)) return;
 
@@ -519,60 +607,31 @@ function makeOtrackGuideLine(cssText) {
 }
 
 function showOtrackGuide(anchor, point, axis, direction, trackingResult) {
-    if (!otrackGuideEl || !anchor) return;
+    if (!otrackGuideEl || !anchor || !point) return;
 
-    // Draw every acquired reference through the viewport, not just the one
-    // direction currently constraining the cursor. At an intersection of
-    // multiple entities this displays all crossing dotted guides together.
+    // Show only the guide currently controlling the cursor. Do not draw all
+    // X/Y/directional references from every acquired point simultaneously.
     otrackGuideEl.replaceChildren();
 
     const rect = renderer.domElement.getBoundingClientRect();
-    const guideAnchors = (Array.isArray(otrackPoints) ? otrackPoints : [])
-        .slice(-4);
-
-    // Keep the active anchor visible even if it is not in the recent-point list.
-    if (!guideAnchors.includes(anchor)) guideAnchors.push(anchor);
-
-    const seen = new Set();
-    const addVertical = (screenX) => {
-        const key = `v:${Math.round(screenX * 10)}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        makeOtrackGuideLine(
-            `left:${screenX}px;top:0;width:0;height:${rect.height}px;` +
-            'border-left:1px dashed #43d6a2;'
-        );
-    };
-    const addHorizontal = (screenY) => {
-        const key = `h:${Math.round(screenY * 10)}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        makeOtrackGuideLine(
-            `left:0;top:${screenY}px;width:${rect.width}px;height:0;` +
-            'border-top:1px dashed #43d6a2;'
-        );
-    };
-    const addDirection = (pointAnchor, dir) => {
-        if (!dir || !Number.isFinite(dir.x) || !Number.isFinite(dir.y)) return;
+    const addVertical = x => makeOtrackGuideLine(
+        `left:${x}px;top:0;width:0;height:${rect.height}px;` +
+        'border-left:1px dashed #43d6a2;'
+    );
+    const addHorizontal = y => makeOtrackGuideLine(
+        `left:0;top:${y}px;width:${rect.width}px;height:0;` +
+        'border-top:1px dashed #43d6a2;'
+    );
+    const addDirection = (origin, dir) => {
+        if (!dir) return;
         const magnitude = Math.hypot(dir.x, dir.y);
         if (magnitude < 1e-10) return;
-
         const ux = dir.x / magnitude;
         const uy = dir.y / magnitude;
-        // A direction and its reverse describe the same infinite guide.
-        const canonicalX = ux < -1e-8 ? -ux : ux;
-        const canonicalY = ux < -1e-8 ? -uy : uy;
-        const key = `d:${Math.round(pointAnchor.x * 10000)}:${Math.round(pointAnchor.y * 10000)}:` +
-            `${Math.round(canonicalX * 10000)}:${Math.round(canonicalY * 10000)}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-
-        const a = worldToScreen(pointAnchor.x, pointAnchor.y);
-        const b = worldToScreen(pointAnchor.x + ux, pointAnchor.y + uy);
+        const a = worldToScreen(origin.x, origin.y);
+        const b = worldToScreen(origin.x + ux, origin.y + uy);
         const angle = Math.atan2(b.y - a.y, b.x - a.x);
         const length = Math.hypot(rect.width, rect.height) * 2.5;
-
-        // The line is centred exactly on its acquired point before rotation.
         makeOtrackGuideLine(
             `left:${a.x - length / 2}px;top:${a.y}px;width:${length}px;height:0;` +
             'border-top:1px dashed #43d6a2;' +
@@ -580,67 +639,18 @@ function showOtrackGuide(anchor, point, axis, direction, trackingResult) {
         );
     };
 
-    guideAnchors.forEach(pointAnchor => {
-        const screen = worldToScreen(pointAnchor.x, pointAnchor.y);
-        // AutoCAD-style X/Y alignment references remain available at every
-        // acquired point, in addition to all object-derived inclined guides.
+    if (axis === 'x') {
+        addVertical(worldToScreen(anchor.x, anchor.y).x);
+    } else if (axis === 'y') {
+        addHorizontal(worldToScreen(anchor.x, anchor.y).y);
+    } else if (axis === 'direction') {
+        addDirection(anchor, direction);
+    } else if (axis === 'intersection' || (trackingResult && trackingResult.intersection)) {
+        // An acquired-guide intersection is the active solution. Display a
+        // compact crosshair at that solution, not every reference guide.
+        const screen = worldToScreen(point.x, point.y);
         addVertical(screen.x);
         addHorizontal(screen.y);
-        (pointAnchor.directions || []).forEach(dir => addDirection(pointAnchor, dir));
-    });
-
-    // Ensure the currently selected tracking direction is represented even
-    // if the anchor's direction list was not populated by a legacy caller.
-    if (axis === 'x') addVertical(worldToScreen(anchor.x, anchor.y).x);
-    else if (axis === 'y') addHorizontal(worldToScreen(anchor.x, anchor.y).y);
-    else if (axis === 'direction' && direction) addDirection(anchor, direction);
-
-    // AutoCAD-style Apparent Intersection cursor:
-    // use a compact X snap glyph at the exact computed intersection, not an
-    // "INT" badge. The tooltip identifies the snap type while the glyph stays
-    // centred on the actual endpoint coordinate.
-    if (axis === 'intersection' || (trackingResult && trackingResult.intersection)) {
-        const screen = worldToScreen(point.x, point.y);
-
-        const marker = document.createElement('div');
-        marker.className = 'cad-otrack-intersection-node';
-        marker.setAttribute('aria-label', 'Apparent Intersection');
-        marker.title = 'Apparent Intersection';
-        marker.style.cssText =
-            `position:absolute;left:${screen.x}px;top:${screen.y}px;` +
-            'width:14px;height:14px;transform:translate(-50%,-50%);' +
-            'pointer-events:none;z-index:3;';
-
-        const glyph = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        glyph.setAttribute('viewBox', '0 0 16 16');
-        glyph.setAttribute('width', '16');
-        glyph.setAttribute('height', '16');
-        glyph.style.cssText = 'position:absolute;inset:-1px;overflow:visible;';
-        glyph.innerHTML =
-            '<path d="M3 3 L13 13 M13 3 L3 13" fill="none" ' +
-            'stroke="#55e6a5" stroke-width="2.2" stroke-linecap="square"/>' +
-            '<circle cx="8" cy="8" r="1.25" fill="#fff2a8" stroke="#164b37" stroke-width=".7"/>';
-        marker.appendChild(glyph);
-
-        const label = document.createElement('span');
-        label.textContent = 'Apparent Intersection';
-        label.style.cssText =
-            'position:absolute;left:13px;top:7px;white-space:nowrap;' +
-            'padding:2px 5px;background:rgba(24,24,24,.94);' +
-            'border:1px solid #55e6a5;border-radius:2px;' +
-            'color:#b9ffd9;font:11px Arial,sans-serif;line-height:14px;';
-        marker.appendChild(label);
-
-        // A subtle pick aperture around the X helps identify the exact snap
-        // location without obscuring the crosshair or the guide intersection.
-        const apertureRing = document.createElement('div');
-        apertureRing.style.cssText =
-            'position:absolute;left:50%;top:50%;width:8px;height:8px;' +
-            'transform:translate(-50%,-50%);border:1px solid rgba(85,230,165,.8);' +
-            'pointer-events:none;';
-        marker.appendChild(apertureRing);
-
-        otrackGuideEl.appendChild(marker);
     }
 
     otrackGuideEl.style.display = otrackGuideEl.childElementCount ? 'block' : 'none';
@@ -1003,6 +1013,7 @@ function toggleOsnap() {
 }
 function toggleOtrack(force) {
     otrackOn = typeof force === 'boolean' ? force : !otrackOn;
+    cancelOtrackAcquisition();
     otrackPoints = [];
     hideOtrackGuide();
     updateStatusBar();
