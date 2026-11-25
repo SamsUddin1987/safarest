@@ -251,9 +251,9 @@
 
     function extendAt(context, target, clickPoint, boundaries, pickTolerance, options = {}) {
         const points = pointFromGeometry(target);
-        if (points.length < 2) return false;
+        if (points.length < 2 || !clickPoint) return false;
 
-        // Ignore the target itself and stale/deleted boundary references.
+        // Ignore the source itself and stale/deleted boundary references.
         const liveObjects = context.getObjects();
         const validBoundaries = (boundaries || []).filter(object =>
             object && object !== target && liveObjects.includes(object)
@@ -263,82 +263,99 @@
         const boundarySegments = segments(validBoundaries);
         if (!boundarySegments.length) return false;
 
-        let nodeIndex = 0;
-        let nodeDistance = Infinity;
-
-        // Select the closest editable vertex to the double-click location.
-        points.forEach((vertex, index) => {
-            const distance = vertex.distanceTo(clickPoint);
-            if (distance < nodeDistance) {
-                nodeDistance = distance;
-                nodeIndex = index;
+        // Pick the source segment nearest to the cursor. The user may click
+        // anywhere on the source object; there is no endpoint-only tolerance.
+        let nearest = null;
+        for (let i = 0; i < points.length - 1; i += 1) {
+            const a = points[i];
+            const b = points[i + 1];
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const len2 = dx * dx + dy * dy;
+            if (len2 < 1e-16) continue;
+            const rawT = ((clickPoint.x - a.x) * dx + (clickPoint.y - a.y) * dy) / len2;
+            const t = Math.max(0, Math.min(1, rawT));
+            const projected = new THREE.Vector3(
+                a.x + dx * t,
+                a.y + dy * t,
+                (a.z || 0) + ((b.z || 0) - (a.z || 0)) * t
+            );
+            const distance = projected.distanceTo(clickPoint);
+            if (!nearest || distance < nearest.distance) {
+                nearest = { index: i, t, distance };
             }
-        });
-
-        if (pickTolerance !== undefined && nodeDistance > pickTolerance) {
-            return false;
         }
+        if (!nearest) return false;
 
-        const candidates = [];
-        if (nodeIndex > 0) {
-            candidates.push({ fixed: points[nodeIndex - 1], end: points[nodeIndex] });
-        }
-        if (nodeIndex < points.length - 1) {
-            candidates.push({ fixed: points[nodeIndex + 1], end: points[nodeIndex] });
-        }
+        const segmentIndex = nearest.index;
+        const segmentT = nearest.t;
+        const segmentCandidates = [];
 
-        let bestHit = null;
+        // Clicking in the first half extends the first endpoint; clicking in
+        // the second half extends the second endpoint. This reproduces the
+        // intuitive AutoCAD side-of-object pick behaviour for quick EXTEND.
+        const addCandidate = (endpointIndex, fixedIndex) => {
+            if (endpointIndex < 0 || endpointIndex >= points.length ||
+                fixedIndex < 0 || fixedIndex >= points.length) return;
+            segmentCandidates.push({
+                end: points[endpointIndex],
+                fixed: points[fixedIndex],
+                endpointIndex
+            });
+        };
+        addCandidate(segmentIndex, segmentIndex + 1);
+        addCandidate(segmentIndex + 1, segmentIndex);
 
-        candidates.forEach(candidate => {
+        const quickMode = !(options && options.preferFarthest === true);
+        const candidatesToTest = quickMode
+            ? [segmentCandidates[segmentT <= 0.5 ? 0 : 1]]
+            : segmentCandidates;
+
+        const hitsForCandidate = candidate => {
             const dx = candidate.end.x - candidate.fixed.x;
             const dy = candidate.end.y - candidate.fixed.y;
             const length = Math.hypot(dx, dy);
-            if (length < 1e-10) return;
+            if (length < 1e-10) return [];
 
             const direction = new THREE.Vector3(dx / length, dy / length, 0);
-            const rayEnd = candidate.end.clone().add(
-                direction.clone().multiplyScalar(1e9)
-            );
-            const currentLength = candidate.end.clone()
-                .sub(candidate.fixed)
-                .dot(direction);
+            const rayEnd = candidate.end.clone().add(direction.clone().multiplyScalar(1e9));
+            const currentLength = candidate.end.clone().sub(candidate.fixed).dot(direction);
+            const hits = [];
 
             boundarySegments.forEach(segment => {
-                const hit = intersect(
-                    candidate.fixed,
-                    rayEnd,
-                    segment.a,
-                    segment.b
-                );
+                const hit = intersect(candidate.fixed, rayEnd, segment.a, segment.b);
                 if (!hit) return;
-
-                const along = hit.point.clone()
-                    .sub(candidate.fixed)
-                    .dot(direction);
-
-                // The boundary must be strictly beyond the current endpoint.
+                const along = hit.point.clone().sub(candidate.fixed).dot(direction);
                 if (along <= currentLength + 1e-8) return;
-
-                const extensionDistance = along - currentLength;
-
-                // Automatic mode stops at the first boundary. When the user
-                // explicitly preselected boundary objects, EXTEND must reach
-                // the farthest valid forward intersection on those objects.
-                const preferFarthest = options && options.preferFarthest === true;
-                if (!bestHit || (preferFarthest
-                    ? extensionDistance > bestHit.extensionDistance
-                    : extensionDistance < bestHit.extensionDistance)) {
-                    bestHit = {
-                        point: hit.point.clone(),
-                        extensionDistance
-                    };
-                }
+                hits.push({
+                    point: hit.point.clone(),
+                    extensionDistance: along - currentLength,
+                    endpointIndex: candidate.endpointIndex
+                });
             });
+            return hits;
+        };
+
+        let bestHit = null;
+        candidatesToTest.forEach(candidate => {
+            const hits = hitsForCandidate(candidate);
+            if (!hits.length) return;
+
+            // In explicit-target mode, the selected target defines the
+            // direction. If both ends can reach it, use the nearer valid end.
+            // For the chosen end, retain the farthest intersection on the
+            // selected target object (important for multi-segment boundaries).
+            const candidateHit = options && options.preferFarthest === true
+                ? hits.reduce((best, hit) => !best || hit.extensionDistance > best.extensionDistance ? hit : best, null)
+                : hits.reduce((best, hit) => !best || hit.extensionDistance < best.extensionDistance ? hit : best, null);
+
+            if (!bestHit || candidateHit.extensionDistance < bestHit.extensionDistance) {
+                bestHit = candidateHit;
+            }
         });
 
         if (!bestHit) return false;
-
-        points[nodeIndex] = bestHit.point;
+        points[bestHit.endpointIndex] = bestHit.point;
         return setExtendedGeometry(target, points);
     }
 

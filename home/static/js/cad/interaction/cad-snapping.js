@@ -278,6 +278,27 @@ function worldToScreen(x, y) {
     };
 }
 
+// Apply AutoCAD-style ORTHO from a fixed base point. Used by drawing,
+// MOVE and COPY/COPY-PASTE previews after OSNAP/OTRACK has resolved.
+function constrainPointToOrtho(point, origin) {
+    if (!orthoOn || !point || !origin) return point;
+
+    const dx = point.x - origin.x;
+    const dy = point.y - origin.y;
+
+    if (Math.abs(dx) >= Math.abs(dy)) {
+        point.y = origin.y;
+    } else {
+        point.x = origin.x;
+    }
+    return point;
+}
+
+function shouldApplyPointOrtho() {
+    return orthoOn && isDrawing && basePoint &&
+        ['line', 'polyline', 'move', 'copy'].includes(currentTool);
+}
+
 // The point a drawing command should use: OSNAP > OTRACK > GRID/ORTHO > raw cursor.
 function getDrawPoint() {
     const pt = getCursorWorldCoordinates().clone();
@@ -348,6 +369,7 @@ function getDrawPoint() {
             if (otrackOn && !suppressOtrackGuides) updateOtrackAcquisition(snap, snapItems);
             hideOtrackGuide();
             pt.set(snap.x, snap.y, 0);
+            if (shouldApplyPointOrtho()) constrainPointToOrtho(pt, basePoint);
             return pt;
         }
     }
@@ -360,6 +382,7 @@ function getDrawPoint() {
         if (tracked) {
             pt.set(tracked.x, tracked.y, 0);
             showOtrackGuide(tracked.anchor, pt, tracked.axis, tracked.direction, tracked);
+            if (shouldApplyPointOrtho()) constrainPointToOrtho(pt, basePoint);
             return pt;
         }
     }
@@ -371,13 +394,8 @@ function getDrawPoint() {
         pt.y = Math.round(pt.y / GRID_SPACING) * GRID_SPACING;
     }
 
-    if (orthoOn && isDrawing && basePoint &&
-        (currentTool === 'line' || currentTool === 'polyline')) {
-        if (Math.abs(pt.x - basePoint.x) >= Math.abs(pt.y - basePoint.y)) {
-            pt.y = basePoint.y;
-        } else {
-            pt.x = basePoint.x;
-        }
+    if (shouldApplyPointOrtho()) {
+        constrainPointToOrtho(pt, basePoint);
     }
 
     return pt;
@@ -677,6 +695,16 @@ function setupSnapUI(container) {
 
 function showSnapMarker(s) {
     if (!snapMarkerEl) return;
+
+    // EXTEND and TRIM are precision modification commands. Keep OSNAP
+    // calculations active so clicks still acquire exact geometry points,
+    // but suppress the visible endpoint/midpoint/node glyphs that obscure
+    // the source and boundary objects while editing.
+    if (currentTool === 'extend' || currentTool === 'trim') {
+        snapMarkerEl.style.display = 'none';
+        return;
+    }
+
     const sp = worldToScreen(s.x, s.y);
     snapMarkerEl.style.left = sp.x + 'px';
     snapMarkerEl.style.top = sp.y + 'px';

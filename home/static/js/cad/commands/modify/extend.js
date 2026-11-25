@@ -1,15 +1,13 @@
-
 /**
  * SAFAR EDGE CAD - EXTEND
- * AutoCAD-style selection workflow.
  *
- * QUICK MODE:
- * EX + Enter -> Click objects to extend -> Enter to finish.
+ * Required command flow:
+ *   EX + ENTER          -> Boundary-pick mode: click one boundary, then click
+ *                          the object/endpoint to extend to that boundary.
+ *   EX + ENTER + ENTER  -> Quick mode: extend to the first boundary ahead.
  *
- * STANDARD-STYLE MODE:
- * Preselect boundary objects -> EX + Enter
- * -> Enter to accept boundaries
- * -> Click objects to extend -> Enter to finish.
+ * In boundary-pick mode the boundary remains highlighted until the extension
+ * succeeds (or the command is cancelled). It is then restored automatically.
  */
 (function (global) {
     'use strict';
@@ -17,8 +15,14 @@
     const CAD = global.CAD;
     const Utils = global.CADModifyUtils;
 
-    let boundaryTargets = [];
-    let standardBoundariesAccepted = false;
+    const PHASE = {
+        PICK_BOUNDARY: 'pick-boundary',
+        PICK_SOURCE: 'pick-source',
+        QUICK: 'quick'
+    };
+
+    let phase = PHASE.PICK_BOUNDARY;
+    let boundaryTarget = null;
     let changedCount = 0;
 
     const PICKBOX_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Crect x='1' y='1' width='10' height='10' fill='none' stroke='%23ffffff' stroke-width='1.2'/%3E%3C/svg%3E") 6 6, default`;
@@ -26,8 +30,13 @@
     function setPickbox(context, enabled) {
         const renderer = context.getRenderer();
         if (renderer && renderer.domElement) {
-            renderer.domElement.style.cursor =
-                enabled ? PICKBOX_CURSOR : '';
+            if (enabled) {
+                renderer.domElement.style.cursor = PICKBOX_CURSOR;
+            } else {
+                // Remove the inline pickbox override so the CAD workspace's
+                // normal crosshair cursor is inherited again after ESC/Enter.
+                renderer.domElement.style.removeProperty('cursor');
+            }
         }
     }
 
@@ -37,228 +46,193 @@
 
     function isExtendable(object) {
         return !!(
-            object &&
-            object.userData &&
-            ['line', 'polyline', 'rect'].includes(
-                object.userData.type
-            )
+            object && object.userData &&
+            ['line', 'polyline', 'rect'].includes(object.userData.type)
         );
     }
 
-    function getTargetAtPointer(context, excluded) {
-        if (typeof context.getObjectsAtPointer === 'function') {
-            return context.getObjectsAtPointer().find(object =>
-                !excluded.includes(object) &&
-                isExtendable(object)
-            ) || null;
-        }
-
-        const object = context.getObjectAtPointer();
-
-        return object &&
-            !excluded.includes(object) &&
-            isExtendable(object)
-                ? object
-                : null;
+    function getTargetAtPointer(context, excluded = []) {
+        const hits = typeof context.getObjectsAtPointer === 'function'
+            ? context.getObjectsAtPointer()
+            : [context.getObjectAtPointer()];
+        return hits.find(object =>
+            object && !excluded.includes(object) && isExtendable(object)
+        ) || null;
     }
 
-    function restoreBoundaryTargets(context) {
-        boundaryTargets.forEach(object => {
-            if (global.CADVisualState && typeof global.CADVisualState.clearBoundary === 'function') {
-                global.CADVisualState.clearBoundary(object);
-            } else if (global.CADVisualState && typeof global.CADVisualState.apply === 'function') {
-                global.CADVisualState.apply(object, 'normal');
-            }
-        });
-        // The boundary selection is temporary in EXTEND. Clear it so the
-        // boundary does not remain highlighted after command completion.
-        if (context && typeof context.clearSelection === 'function') {
-            context.clearSelection();
+    function highlightBoundary(object) {
+        if (object && global.CADVisualState &&
+            typeof global.CADVisualState.apply === 'function') {
+            global.CADVisualState.apply(object, 'boundary');
         }
-        boundaryTargets = [];
+    }
+
+    function restoreBoundary() {
+        if (!boundaryTarget) return;
+        if (global.CADVisualState &&
+            typeof global.CADVisualState.clearBoundary === 'function') {
+            global.CADVisualState.clearBoundary(boundaryTarget);
+        } else if (global.CADVisualState &&
+            typeof global.CADVisualState.apply === 'function') {
+            global.CADVisualState.apply(boundaryTarget, 'normal');
+        }
+        boundaryTarget = null;
     }
 
     function finish(context) {
+        restoreBoundary();
         setPickbox(context, false);
         context.finishCurrentTool();
     }
 
+    function notifyFinished(context, count) {
+        finish(context);
+        context.notify(count
+            ? `EXTEND — Finished. ${count} object(s) modified.`
+            : 'EXTEND — Finished. No objects modified.');
+    }
+
     CAD.registerTool('extend', {
-
         onStart(context) {
-
-            // Preselected objects are explicit boundary edges.
-            boundaryTargets = context.getSelectedObjects()
-                .filter(object =>
-                    isLive(object, context) &&
-                    isExtendable(object)
-                );
-
-            standardBoundariesAccepted =
-                boundaryTargets.length === 0;
-
+            phase = PHASE.PICK_BOUNDARY;
+            boundaryTarget = null;
             changedCount = 0;
-
-            // Keep explicitly preselected boundary objects visibly distinct
-            // for the entire command, regardless of cursor rollover.
-            boundaryTargets.forEach(object => {
-                if (global.CADVisualState && typeof global.CADVisualState.apply === 'function') {
-                    global.CADVisualState.apply(object, 'boundary');
-                }
-            });
-
             setPickbox(context, true);
-
-            if (boundaryTargets.length) {
-
-                context.setPrompt(
-                    `EXTEND — ${boundaryTargets.length} boundary object(s) preselected. Press ENTER to accept boundaries, then select objects to extend.`
-                );
-
-            } else {
-
-                context.setPrompt(
-                    'EXTEND — QUICK mode: Select objects to extend. All other eligible objects are potential boundaries. Press ENTER to finish.'
-                );
-
-            }
+            context.setPrompt(
+                'EXTEND — Select a boundary object, or press ENTER again for automatic first-boundary mode.'
+            );
         },
 
         onClick(point, context) {
+            if (phase === PHASE.PICK_BOUNDARY) {
+                const pickedBoundary = getTargetAtPointer(context);
+                if (!pickedBoundary) {
+                    context.setPrompt('EXTEND — Select a LINE, POLYLINE or RECTANGLE as the boundary.');
+                    return;
+                }
 
-            // Standard mode requires ENTER to accept boundaries first.
-            if (!standardBoundariesAccepted) {
-
+                boundaryTarget = pickedBoundary;
+                highlightBoundary(boundaryTarget);
+                phase = PHASE.PICK_SOURCE;
                 context.setPrompt(
-                    'EXTEND — Press ENTER to accept the highlighted boundary objects before selecting objects to extend.'
+                    'EXTEND — Boundary selected and highlighted. Click anywhere on the LINE/POLYLINE/RECTANGLE to extend it toward this boundary.'
                 );
-
                 return;
             }
 
-            const liveBoundaries = boundaryTargets.filter(
-                object => isLive(object, context)
-            );
+            if (phase === PHASE.PICK_SOURCE) {
+                if (!boundaryTarget || !isLive(boundaryTarget, context)) {
+                    restoreBoundary();
+                    phase = PHASE.PICK_BOUNDARY;
+                    context.setPrompt('EXTEND — Boundary is no longer available. Select a boundary object.');
+                    return;
+                }
 
-            const clicked = getTargetAtPointer(
-                context,
-                liveBoundaries
-            );
+                const source = getTargetAtPointer(context, [boundaryTarget]);
+                if (!source) {
+                    context.setPrompt('EXTEND — Click the object/endpoint to extend. The selected boundary remains highlighted.');
+                    return;
+                }
 
-            if (!clicked) {
-
-                context.setPrompt(
-                    'EXTEND — Select a LINE, POLYLINE or RECTANGLE near the endpoint/vertex to extend. Press ENTER to finish.'
+                const before = context.captureObjects([source]);
+                const tolerance = context.getPickTolerance
+                    ? context.getPickTolerance(20)
+                    : undefined;
+                const changed = Utils.extendAt(
+                    context,
+                    source,
+                    point,
+                    [boundaryTarget],
+                    tolerance,
+                    { preferFarthest: true }
                 );
 
-                return;
-            }
+                if (!changed) {
+                    context.setPrompt('EXTEND — No valid intersection with the selected boundary in that direction. Click the source object again to retry. The boundary remains highlighted.');
+                    return;
+                }
 
-            // Quick mode: all other eligible entities are boundaries.
-            // Standard mode: only accepted boundary entities are used.
-            const boundaries = liveBoundaries.length
-                ? liveBoundaries
-                : context.getObjects().filter(object =>
-                    object !== clicked &&
-                    isExtendable(object)
-                );
-
-            if (!boundaries.length) {
-
-                context.setPrompt(
-                    'EXTEND — No valid boundary objects are available.'
-                );
-
-                return;
-            }
-
-            const before = context.captureObjects([clicked]);
-
-            const tolerance = context.getPickTolerance
-                ? context.getPickTolerance(20)
-                : undefined;
-
-            const changed = Utils.extendAt(
-                context,
-                clicked,
-                point,
-                boundaries,
-                tolerance,
-                { preferFarthest: liveBoundaries.length > 0 }
-            );
-
-            if (changed) {
-
-                context.recordModify([clicked], before);
-
+                context.recordModify([source], before);
                 changedCount += 1;
+                // The selected target is temporary; restore its original
+                // appearance and finish this one-target EXTEND operation.
+                notifyFinished(context, changedCount);
+                return;
+            }
 
-                context.setPrompt(
-                    liveBoundaries.length
-                        ? `EXTEND — Extended to selected boundary. ${changedCount} object(s) modified. Select another object or press ENTER to finish.`
-                        : `EXTEND — Extended to first valid boundary. ${changedCount} object(s) modified. Select another object or press ENTER to finish.`
+            if (phase === PHASE.QUICK) {
+                const source = getTargetAtPointer(context);
+                if (!source) {
+                    context.setPrompt('EXTEND — Select an object/endpoint to extend, or press ENTER to finish.');
+                    return;
+                }
+
+                const boundaries = context.getObjects().filter(object =>
+                    object !== source && isExtendable(object)
+                );
+                if (!boundaries.length) {
+                    context.setPrompt('EXTEND — No other eligible boundary objects are available.');
+                    return;
+                }
+
+                const before = context.captureObjects([source]);
+                const tolerance = context.getPickTolerance
+                    ? context.getPickTolerance(20)
+                    : undefined;
+                const changed = Utils.extendAt(
+                    context,
+                    source,
+                    point,
+                    boundaries,
+                    tolerance,
+                    { preferFarthest: false }
                 );
 
-            } else {
-
-                context.setPrompt(
-                    'EXTEND — No valid boundary in the picked direction. Select nearer the endpoint and try again, or press ENTER to finish.'
-                );
-
+                if (changed) {
+                    context.recordModify([source], before);
+                    changedCount += 1;
+                    context.setPrompt(`EXTEND — Extended to first boundary. ${changedCount} object(s) modified. Select another object or press ENTER to finish.`);
+                } else {
+                    context.setPrompt('EXTEND — No valid boundary ahead on the clicked side. Click the source object again to retry.');
+                }
             }
         },
 
         onEnter(context) {
-
-            // First ENTER accepts preselected Standard-mode boundaries.
-            if (
-                boundaryTargets.length &&
-                !standardBoundariesAccepted
-            ) {
-
-                standardBoundariesAccepted = true;
-
-                context.setPrompt(
-                    'EXTEND — Boundary edges accepted. Select objects/endpoints to extend. Press ENTER to finish.'
-                );
-
+            if (phase === PHASE.PICK_BOUNDARY) {
+                // A second ENTER with no boundary selected explicitly chooses
+                // quick mode. Quick mode uses the first valid boundary only.
+                phase = PHASE.QUICK;
+                context.setPrompt('EXTEND — Automatic mode. Click an object/endpoint to extend to the first boundary ahead. Press ENTER to finish.');
                 return;
             }
 
-            const count = changedCount;
+            if (phase === PHASE.PICK_SOURCE) {
+                // Do not silently discard an accepted, highlighted boundary.
+                // ENTER cancels this one-target operation and restores it.
+                notifyFinished(context, changedCount);
+                return;
+            }
 
-            finish(context);
-
-            context.notify(
-                count
-                    ? `EXTEND — Finished. ${count} object(s) modified.`
-                    : 'EXTEND — Finished. No objects modified.'
-            );
+            if (phase === PHASE.QUICK) {
+                notifyFinished(context, changedCount);
+            }
         },
 
         onFinish(context) {
-
-            restoreBoundaryTargets(context);
-            standardBoundariesAccepted = false;
-            changedCount = 0;
-
+            restoreBoundary();
             setPickbox(context, false);
+            phase = PHASE.PICK_BOUNDARY;
+            changedCount = 0;
         }
-
     });
 
     CAD.registerCommand({
-
         name: 'EXTEND',
         aliases: ['EX'],
-
         desc: 'AutoCAD-style EXTEND',
-
         category: 'modify',
-
-        execute: () =>
-            CAD.createContext().setToolName('extend')
-
+        execute: () => CAD.createContext().setToolName('extend')
     });
 
 })(window);

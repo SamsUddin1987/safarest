@@ -202,6 +202,18 @@ function onMouseMove(event) {
             gripPoint.y = Math.round(gripPoint.y / GRID_SPACING) * GRID_SPACING;
         }
 
+        // ORTHO constrains selected-vertex and centre-grip movement
+        // (STRETCH-style editing) without changing OSNAP acquisition.
+        if (orthoOn && drag.startPoint) {
+            const dx = gripPoint.x - drag.startPoint.x;
+            const dy = gripPoint.y - drag.startPoint.y;
+            if (Math.abs(dx) >= Math.abs(dy)) {
+                gripPoint.y = drag.startPoint.y;
+            } else {
+                gripPoint.x = drag.startPoint.x;
+            }
+        }
+
         if (gripPoint.distanceTo(drag.startPoint) > 1e-7) {
             drag.moved = true;
             renderer.domElement.style.cursor = 'grabbing';
