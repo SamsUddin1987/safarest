@@ -6,6 +6,7 @@
 // material's original colour so grouped entities and material arrays restore
 // correctly after the pointer leaves.
 const cadOriginalMaterialColors = new WeakMap();
+const cadPersistentBoundaryHighlights = new WeakSet();
 
 function forEachCadMaterial(object, callback) {
     if (!object || typeof callback !== 'function') return;
@@ -26,6 +27,7 @@ function forEachCadMaterial(object, callback) {
 
 function applyCadObjectVisualState(object, state) {
     if (!object) return;
+    if (state === 'boundary') cadPersistentBoundaryHighlights.add(object);
     forEachCadMaterial(object, material => {
         if (!cadOriginalMaterialColors.has(material)) {
             cadOriginalMaterialColors.set(material, material.color.clone());
@@ -34,11 +36,25 @@ function applyCadObjectVisualState(object, state) {
             material.color.setHex(0x00ffff); // persistent selection: cyan
         } else if (state === 'hover') {
             material.color.setHex(0xffa500); // rollover: amber/orange
+        } else if (state === 'boundary') {
+            material.color.setHex(0xff00ff); // persistent EXTEND boundary: magenta
         } else {
             material.color.copy(cadOriginalMaterialColors.get(material));
         }
     });
 }
+
+// Public visual-state bridge for command modules that need a persistent
+// temporary highlight (for example, EXTEND's accepted boundary set).
+window.CADVisualState = window.CADVisualState || {};
+window.CADVisualState.apply = function (object, state) {
+    applyCadObjectVisualState(object, state);
+};
+window.CADVisualState.clearBoundary = function (object) {
+    if (!object) return;
+    cadPersistentBoundaryHighlights.delete(object);
+    applyCadObjectVisualState(object, 'normal');
+};
 
 function resolveTopLevelCadEntity(object) {
     while (object && !drawnObjects.includes(object)) {
@@ -74,7 +90,8 @@ function updateCadRolloverHighlight() {
     clearHover();
     hoverObject = nextHover;
 
-    if (hoverObject && !selectedObjects.includes(hoverObject)) {
+    if (hoverObject && !selectedObjects.includes(hoverObject) &&
+        !cadPersistentBoundaryHighlights.has(hoverObject)) {
         applyCadObjectVisualState(hoverObject, 'hover');
     }
 }
@@ -185,17 +202,6 @@ function onMouseMove(event) {
             gripPoint.y = Math.round(gripPoint.y / GRID_SPACING) * GRID_SPACING;
         }
 
-        // ORTHO also constrains vertex/centre grip edits (STRETCH-style).
-        if (orthoOn && drag.startPoint) {
-            const dx = gripPoint.x - drag.startPoint.x;
-            const dy = gripPoint.y - drag.startPoint.y;
-            if (Math.abs(dx) >= Math.abs(dy)) {
-                gripPoint.y = drag.startPoint.y;
-            } else {
-                gripPoint.x = drag.startPoint.x;
-            }
-        }
-
         if (gripPoint.distanceTo(drag.startPoint) > 1e-7) {
             drag.moved = true;
             renderer.domElement.style.cursor = 'grabbing';
@@ -276,7 +282,9 @@ function clearHover() {
     hoverObject = null;
     applyCadObjectVisualState(
         previous,
-        selectedObjects.includes(previous) ? 'selected' : 'normal'
+        cadPersistentBoundaryHighlights.has(previous)
+            ? 'boundary'
+            : (selectedObjects.includes(previous) ? 'selected' : 'normal')
     );
 }
 
@@ -286,7 +294,9 @@ function setCadObjectSelectedState(obj, selected) {
     if (!obj) return;
     applyCadObjectVisualState(
         obj,
-        selected ? 'selected' : (hoverObject === obj ? 'hover' : 'normal')
+        cadPersistentBoundaryHighlights.has(obj)
+            ? 'boundary'
+            : (selected ? 'selected' : (hoverObject === obj ? 'hover' : 'normal'))
     );
 }
 

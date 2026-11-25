@@ -62,9 +62,23 @@
                 : null;
     }
 
-    function finish(context) {
+    function restoreBoundaryTargets(context) {
+        boundaryTargets.forEach(object => {
+            if (global.CADVisualState && typeof global.CADVisualState.clearBoundary === 'function') {
+                global.CADVisualState.clearBoundary(object);
+            } else if (global.CADVisualState && typeof global.CADVisualState.apply === 'function') {
+                global.CADVisualState.apply(object, 'normal');
+            }
+        });
+        // The boundary selection is temporary in EXTEND. Clear it so the
+        // boundary does not remain highlighted after command completion.
+        if (context && typeof context.clearSelection === 'function') {
+            context.clearSelection();
+        }
         boundaryTargets = [];
-        standardBoundariesAccepted = false;
+    }
+
+    function finish(context) {
         setPickbox(context, false);
         context.finishCurrentTool();
     }
@@ -85,12 +99,20 @@
 
             changedCount = 0;
 
+            // Keep explicitly preselected boundary objects visibly distinct
+            // for the entire command, regardless of cursor rollover.
+            boundaryTargets.forEach(object => {
+                if (global.CADVisualState && typeof global.CADVisualState.apply === 'function') {
+                    global.CADVisualState.apply(object, 'boundary');
+                }
+            });
+
             setPickbox(context, true);
 
             if (boundaryTargets.length) {
 
                 context.setPrompt(
-                    `EXTEND — ${boundaryTargets.length} boundary object(s) preselected and highlighted. They remain the active boundaries until EXTEND finishes. Press ENTER to accept, then select objects to extend.`
+                    `EXTEND — ${boundaryTargets.length} boundary object(s) preselected. Press ENTER to accept boundaries, then select objects to extend.`
                 );
 
             } else {
@@ -161,7 +183,8 @@
                 clicked,
                 point,
                 boundaries,
-                tolerance
+                tolerance,
+                { preferFarthest: liveBoundaries.length > 0 }
             );
 
             if (changed) {
@@ -196,7 +219,7 @@
                 standardBoundariesAccepted = true;
 
                 context.setPrompt(
-                    'EXTEND — Boundary edges accepted and retained. Select objects/endpoints to extend. Press ENTER to finish.'
+                    'EXTEND — Boundary edges accepted. Select objects/endpoints to extend. Press ENTER to finish.'
                 );
 
                 return;
@@ -215,7 +238,7 @@
 
         onFinish(context) {
 
-            boundaryTargets = [];
+            restoreBoundaryTargets(context);
             standardBoundariesAccepted = false;
             changedCount = 0;
 

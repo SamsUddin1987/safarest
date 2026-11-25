@@ -249,7 +249,7 @@
         return true;
     }
 
-    function extendAt(context, target, clickPoint, boundaries, pickTolerance) {
+    function extendAt(context, target, clickPoint, boundaries, pickTolerance, options = {}) {
         const points = pointFromGeometry(target);
         if (points.length < 2) return false;
 
@@ -321,10 +321,13 @@
 
                 const extensionDistance = along - currentLength;
 
-                // EXTEND must reach the farthest valid selected boundary.
-                // This deliberately ignores nearer intermediate barriers and
-                // chooses the greatest forward intersection on the same ray.
-                if (!bestHit || extensionDistance > bestHit.extensionDistance) {
+                // Automatic mode stops at the first boundary. When the user
+                // explicitly preselected boundary objects, EXTEND must reach
+                // the farthest valid forward intersection on those objects.
+                const preferFarthest = options && options.preferFarthest === true;
+                if (!bestHit || (preferFarthest
+                    ? extensionDistance > bestHit.extensionDistance
+                    : extensionDistance < bestHit.extensionDistance)) {
                     bestHit = {
                         point: hit.point.clone(),
                         extensionDistance

@@ -279,20 +279,6 @@ function worldToScreen(x, y) {
 }
 
 // The point a drawing command should use: OSNAP > OTRACK > GRID/ORTHO > raw cursor.
-function constrainPointToOrtho(point, origin) {
-    if (!orthoOn || !point || !origin) return point;
-
-    const dx = point.x - origin.x;
-    const dy = point.y - origin.y;
-
-    if (Math.abs(dx) >= Math.abs(dy)) {
-        point.y = origin.y;
-    } else {
-        point.x = origin.x;
-    }
-    return point;
-}
-
 function getDrawPoint() {
     const pt = getCursorWorldCoordinates().clone();
     currentSnap = null;
@@ -327,6 +313,14 @@ function getDrawPoint() {
         return pt;
     }
 
+    // OTRACK construction guides are intentionally disabled in EXTEND and
+    // TRIM. These commands use boundary geometry rather than tracking guides.
+    const suppressOtrackGuides = currentTool === 'extend' || currentTool === 'trim';
+    if (suppressOtrackGuides) {
+        cancelOtrackAcquisition();
+        hideOtrackGuide();
+    }
+
     if (otrackTool !== currentTool) {
         cancelOtrackAcquisition();
         otrackPoints = [];
@@ -351,13 +345,9 @@ function getDrawPoint() {
         if (snap) {
             currentSnap = snap;
             showSnapMarker(snap);
-            if (otrackOn) updateOtrackAcquisition(snap, snapItems);
+            if (otrackOn && !suppressOtrackGuides) updateOtrackAcquisition(snap, snapItems);
             hideOtrackGuide();
             pt.set(snap.x, snap.y, 0);
-            if (orthoOn && isDrawing && basePoint &&
-                ['line', 'polyline', 'move', 'copy'].includes(currentTool)) {
-                constrainPointToOrtho(pt, basePoint);
-            }
             return pt;
         }
     }
@@ -365,15 +355,11 @@ function getDrawPoint() {
     hideSnapMarker();
     cancelOtrackAcquisition();
 
-    if (otrackOn) {
+    if (otrackOn && !suppressOtrackGuides) {
         const tracked = computeOtrackPoint(pt);
         if (tracked) {
             pt.set(tracked.x, tracked.y, 0);
             showOtrackGuide(tracked.anchor, pt, tracked.axis, tracked.direction, tracked);
-            if (orthoOn && isDrawing && basePoint &&
-                ['line', 'polyline', 'move', 'copy'].includes(currentTool)) {
-                constrainPointToOrtho(pt, basePoint);
-            }
             return pt;
         }
     }
@@ -386,8 +372,12 @@ function getDrawPoint() {
     }
 
     if (orthoOn && isDrawing && basePoint &&
-        ['line', 'polyline', 'move', 'copy'].includes(currentTool)) {
-        constrainPointToOrtho(pt, basePoint);
+        (currentTool === 'line' || currentTool === 'polyline')) {
+        if (Math.abs(pt.x - basePoint.x) >= Math.abs(pt.y - basePoint.y)) {
+            pt.y = basePoint.y;
+        } else {
+            pt.x = basePoint.x;
+        }
     }
 
     return pt;
