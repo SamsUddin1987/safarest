@@ -800,6 +800,16 @@ function setupStatusBar(container) {
     bar.appendChild(mk('cad-st-gsnap', 'SNAP', toggleGridSnap));
     bar.appendChild(mk('cad-st-grid', 'GRID', toggleGrid));
 
+    // Manual measurement sync sits beside GRID in the same bottom status bar.
+    // Right-click opens the Auto Update setting; automatic sync is OFF by default.
+    const measureButton = mk('cad-st-measure', 'MEASURE', () => {
+        if (typeof window.safarRecordCadMeasurements === 'function') {
+            window.safarRecordCadMeasurements();
+        }
+    });
+    measureButton.title = 'Left-click: update measurement sheet | Right-click: Auto Update settings';
+    bar.appendChild(measureButton);
+
     // IMPORTANT: Append to the existing tab ribbon, after Spreadsheet.
     const tabBar = document.querySelector('.app-tab-bar');
 
