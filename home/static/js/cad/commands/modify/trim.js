@@ -16,6 +16,10 @@
     const PICKBOX_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Crect x='1' y='1' width='10' height='10' fill='none' stroke='%23ffffff' stroke-width='1.2'/%3E%3C/svg%3E") 6 6, default`;
 
     function setPickbox(context, enabled) {
+        if (global.SafarEdgeCadCursor && typeof global.SafarEdgeCadCursor.setMode === 'function') {
+            global.SafarEdgeCadCursor.setMode(enabled ? 'trim' : 'select');
+            return;
+        }
         const renderer = context.getRenderer();
         if (renderer && renderer.domElement) {
             renderer.domElement.style.cursor = enabled ? PICKBOX_CURSOR : '';

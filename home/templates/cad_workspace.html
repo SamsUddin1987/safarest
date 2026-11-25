@@ -47,6 +47,13 @@
         cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M16 0v12M16 20v12M0 16h12M20 16h12" stroke="%2300ffcc" stroke-width="1"/><rect x="12" y="12" width="8" height="8" fill="none" stroke="%23ffffff" stroke-width="1"/></svg>') 16 16, crosshair;
     }
 
+    /* Apply the AutoCAD-style crosshair + centre pickbox directly to the
+       Three.js canvas. The canvas is the actual pointer target; setting the
+       cursor only on its parent can fall back to the browser arrow. */
+    #cad-canvas-container canvas {
+        cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M16 0v12M16 20v12M0 16h12M20 16h12" stroke="%2300ffcc" stroke-width="1"/><rect x="12" y="12" width="8" height="8" fill="none" stroke="%23ffffff" stroke-width="1"/></svg>') 16 16, crosshair;
+    }
+
     #luckysheet {
         width: 100%;
         height: 100%;
@@ -687,7 +694,7 @@
 
 <!-- CORE -->
 <script src="{% static 'js/cad/core/cad-registry.js' %}?v=20261123-5"></script>
-<script src="{% static 'js/cad/core/cad-core.js' %}?v=20261125-ortho-restored-1"></script>
+<script src="{% static 'js/cad/core/cad-core.js' %}?v=20261125-4"></script>
 
 <!-- DRAW COMMANDS -->
 <!-- INDEPENDENT DRAW COMMANDS -->
@@ -725,11 +732,11 @@
 
 <!-- INTERACTION -->
 <script src="{% static 'js/cad/interaction/cad-input.js' %}?v=20261123-5"></script>
-<script src="{% static 'js/cad/interaction/cad-interaction.js' %}?v=20261125-ortho-restored-1"></script>
-<script src="{% static 'js/cad/interaction/cad-snapping.js' %}?v=20261125-ortho-restored-1"></script>
+<script src="{% static 'js/cad/interaction/cad-interaction.js' %}?v=20261125-4"></script>
+<script src="{% static 'js/cad/interaction/cad-snapping.js' %}?v=20261125-extend-trim-clean"></script>
 
 <!-- HISTORY -->
-<script src="{% static 'js/cad/history/cad-history-view.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/history/cad-history-view.js' %}?v=20261125-pline-undo-1"></script>
 
 <!-- VIEW NAVIGATION -->
 <script src="{% static 'js/cad/commands/view/view-navigation.js' %}?v=20261124-1"></script>
@@ -741,7 +748,7 @@
 <script src="{% static 'js/cad/command-line/cad-command-line.js' %}?v=20261124-1"></script>
 
 <!-- EXISTING TOOLS AND ENTITIES -->
-<script src="{% static 'js/cad/cad-tools.js' %}?v=20261125-ortho-restored-1"></script>
+<script src="{% static 'js/cad/cad-tools.js' %}?v=20261125-4"></script>
 <script src="{% static 'js/cad/entities/cad-entities.js' %}?v=20261123-5"></script>
 
 <!-- KEYBOARD AND IMPORT -->

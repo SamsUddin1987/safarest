@@ -758,8 +758,10 @@ function createCADCommandContext() {
         // under the pick aperture.
         getObjectsAtPointer() {
             if (!raycaster || !camera || !mouse) return [];
-            raycaster.setFromCamera(mouse, camera);
-            const hits = raycaster.intersectObjects(drawnObjects.filter(o => !(o.userData && o.userData.layerLocked)), true);
+            const pickable = drawnObjects.filter(o => !(o.userData && o.userData.layerLocked));
+            const hits = window.CADPicking && typeof window.CADPicking.getIntersections === 'function'
+                ? window.CADPicking.getIntersections(pickable)
+                : (raycaster.setFromCamera(mouse, camera), raycaster.intersectObjects(pickable, true));
             const objects = [];
             hits.forEach(hit => {
                 let object = hit.object;

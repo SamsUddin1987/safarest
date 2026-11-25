@@ -22,9 +22,12 @@
     const RECOVERY_DB_NAME = 'SAFAREDGE_PROJECT_RECOVERY';
     const RECOVERY_STORE_NAME = 'snapshots';
     const RECOVERY_KEY = 'active-project';
+    const PERSISTED_FILE_HANDLE_KEY = 'active-file-handle';
+    const ACTIVE_PROJECT_META_KEY = 'active-project-meta';
     const AUTOSAVE_INTERVAL_KEY = 'safaredge.autosave.intervalSeconds';
     const DEFAULT_AUTOSAVE_SECONDS = 60;
     let autoSaveTimer = null;
+    let autoSaveDebounceTimer = null;
     let autoSaveInProgress = false;
     let isRestoringProject = false;
     let dirtyVersion = 0;
@@ -212,6 +215,19 @@
         });
     }
 
+    function restoreCadCrosshairCursor() {
+        // Reapply the same crosshair + centre-pickbox cursor used by the
+        // normal selection state, including after loading an existing .est.
+        if (global.SafarEdgeCadCursor && typeof global.SafarEdgeCadCursor.restore === 'function') {
+            global.SafarEdgeCadCursor.restore();
+            return;
+        }
+        const container = document.getElementById('cad-canvas-container');
+        const canvas = container && container.querySelector('canvas');
+        if (container) container.style.cursor = 'crosshair';
+        if (canvas) canvas.style.cursor = 'crosshair';
+    }
+
     function loadProjectData(data) {
         validateProject(data);
         isRestoringProject = true;
@@ -291,6 +307,7 @@
         // Opening a project starts with a clean Undo/Redo history.
         context.resetHistory();
         context.setToolName('select');
+        restoreCadCrosshairCursor();
 
         // Restore the complete Spreadsheet workbook.
         restoreSpreadsheet(data.spreadsheet.sheets);
@@ -360,9 +377,13 @@
             }
             const data = buildProjectData();
             await writeToHandle(currentFileHandle, data);
+            await persistFileHandle(currentFileHandle);
+            await persistActiveProjectMetadata(currentFileName);
             isDirty = false;
             lastAutoSavedVersion = dirtyVersion;
-            await deleteRecoverySnapshot();
+            // Keep a browser-local recovery image as well as the .est file.
+            // This lets the same drawing return immediately after a hard refresh.
+            await saveRecoverySnapshot(data);
 
             getContext().notify(
                 'Project saved: ' + currentFileName
@@ -382,7 +403,12 @@
             downloadProject(data, currentFileName);
             isDirty = false;
             lastAutoSavedVersion = dirtyVersion;
-            await deleteRecoverySnapshot();
+            currentFileHandle = null;
+            await deletePersistedFileHandle();
+            await persistActiveProjectMetadata(currentFileName);
+            // Firefox downloads a new copy instead of overwriting the opened
+            // file. Retain the exact current state locally for refresh recovery.
+            await saveRecoverySnapshot(data);
 
             getContext().notify(
                 'Updated project download started: ' + currentFileName
@@ -420,9 +446,11 @@
 
                 currentFileHandle = handle;
                 currentFileName = handle.name;
+                await persistFileHandle(handle);
+                await persistActiveProjectMetadata(currentFileName);
                 isDirty = false;
                 lastAutoSavedVersion = dirtyVersion;
-                await deleteRecoverySnapshot();
+                await saveRecoverySnapshot(data);
 
                 getContext().notify(
                     'Project saved: ' + currentFileName
@@ -443,9 +471,12 @@
 
         downloadProject(data, filename);
         currentFileName = filename;
+        currentFileHandle = null;
         isDirty = false;
         lastAutoSavedVersion = dirtyVersion;
-        await deleteRecoverySnapshot();
+        await deletePersistedFileHandle();
+        await persistActiveProjectMetadata(currentFileName);
+        await saveRecoverySnapshot(data);
 
         getContext().notify(
             'Project download started: ' + currentFileName
@@ -460,13 +491,18 @@
 
         currentFileHandle = handle;
         currentFileName = file.name || handle?.name || 'Untitled.est';
-        // Keep the selected file handle only in this browser session.
-        // Never carry a previously opened file into a fresh workspace.
-        if (!handle) await deletePersistedFileHandle();
+        // Keep the actual FileSystemFileHandle in IndexedDB so Save and
+        // AutoSave can continue targeting this same .est file after refresh.
+        if (handle) await persistFileHandle(handle);
+        else await deletePersistedFileHandle();
+        await persistActiveProjectMetadata(currentFileName);
+        restoreCadCrosshairCursor();
 
         isDirty = false;
         lastAutoSavedVersion = dirtyVersion;
-        await deleteRecoverySnapshot();
+        // Seed recovery as soon as an existing project is opened. This is
+        // essential in Firefox, where a file handle cannot be retained.
+        await saveRecoverySnapshot(buildProjectData());
 
         global.CAD.createContext().notify(
             `Opened project: ${currentFileName}`
@@ -631,15 +667,28 @@
         isDirty = false;
         lastAutoSavedVersion = dirtyVersion;
         deletePersistedFileHandle();
+        deleteActiveProjectMetadata();
         deleteRecoverySnapshot();
 
         context.notify('New project created.');
+    }
+
+    function scheduleRecoveryAutoSave(delay = 350) {
+        if (autoSaveDebounceTimer) global.clearTimeout(autoSaveDebounceTimer);
+        autoSaveDebounceTimer = global.setTimeout(function () {
+            autoSaveDebounceTimer = null;
+            autoSaveProject();
+        }, delay);
     }
 
     function markDirty() {
         if (isRestoringProject) return;
         isDirty = true;
         dirtyVersion += 1;
+        // Save a local recovery snapshot shortly after each completed edit.
+        // This avoids losing recent work when the user refreshes before the
+        // normal periodic AutoSave interval has elapsed.
+        scheduleRecoveryAutoSave();
     }
 
     function createSpreadsheetHooks() {
@@ -698,9 +747,9 @@
         return recoveryDbPromise;
     }
 
-    // File handles are intentionally not restored across page sessions.
-    // A project becomes the active AutoSave target only after the user
-    // explicitly opens it or chooses Save As in the current session.
+    // A writable file handle is retained in IndexedDB where the browser
+    // supports the File System Access API. The active filename is stored
+    // separately for browsers that can only save by downloading a copy.
     async function deletePersistedFileHandle() {
         try {
             const db = await openRecoveryDatabase();
@@ -715,6 +764,120 @@
         } catch (error) {
             console.warn('SAFAR EDGE saved file handle cleanup failed:', error);
         }
+    }
+
+    async function persistActiveProjectMetadata(fileName) {
+        try {
+            const db = await openRecoveryDatabase();
+            if (!db) return false;
+            await new Promise(function (resolve, reject) {
+                const tx = db.transaction(RECOVERY_STORE_NAME, 'readwrite');
+                tx.objectStore(RECOVERY_STORE_NAME).put({
+                    id: ACTIVE_PROJECT_META_KEY,
+                    fileName: fileName || '',
+                    savedAt: new Date().toISOString()
+                });
+                tx.oncomplete = resolve;
+                tx.onerror = function () { reject(tx.error || new Error('Could not remember the active project name.')); };
+                tx.onabort = function () { reject(tx.error || new Error('Remembering the active project name was cancelled.')); };
+            });
+            return true;
+        } catch (error) {
+            console.warn('SAFAR EDGE could not persist the active project name:', error);
+            return false;
+        }
+    }
+
+    async function deleteActiveProjectMetadata() {
+        try {
+            const db = await openRecoveryDatabase();
+            if (!db) return;
+            await new Promise(function (resolve, reject) {
+                const tx = db.transaction(RECOVERY_STORE_NAME, 'readwrite');
+                tx.objectStore(RECOVERY_STORE_NAME).delete(ACTIVE_PROJECT_META_KEY);
+                tx.oncomplete = resolve;
+                tx.onerror = function () { reject(tx.error); };
+                tx.onabort = function () { reject(tx.error); };
+            });
+        } catch (error) {
+            console.warn('SAFAR EDGE active project metadata cleanup failed:', error);
+        }
+    }
+
+    async function restorePersistedProjectMetadata() {
+        try {
+            const db = await openRecoveryDatabase();
+            if (!db) return;
+            const record = await new Promise(function (resolve, reject) {
+                const tx = db.transaction(RECOVERY_STORE_NAME, 'readonly');
+                const request = tx.objectStore(RECOVERY_STORE_NAME).get(ACTIVE_PROJECT_META_KEY);
+                request.onsuccess = function () { resolve(request.result || null); };
+                request.onerror = function () { reject(request.error || new Error('Could not read the active project name.')); };
+            });
+            if (record && typeof record.fileName === 'string') {
+                currentFileName = record.fileName;
+            }
+        } catch (error) {
+            console.warn('SAFAR EDGE could not restore the active project name:', error);
+        }
+    }
+
+    async function persistFileHandle(handle) {
+        if (!handle || typeof handle.getFile !== 'function') return false;
+        try {
+            const db = await openRecoveryDatabase();
+            if (!db) return false;
+            await new Promise(function (resolve, reject) {
+                const tx = db.transaction(RECOVERY_STORE_NAME, 'readwrite');
+                tx.objectStore(RECOVERY_STORE_NAME).put({
+                    id: PERSISTED_FILE_HANDLE_KEY,
+                    handle: handle,
+                    fileName: handle.name || currentFileName,
+                    savedAt: new Date().toISOString()
+                });
+                tx.oncomplete = resolve;
+                tx.onerror = function () { reject(tx.error || new Error('Could not remember the active project file.')); };
+                tx.onabort = function () { reject(tx.error || new Error('Remembering the active project file was cancelled.')); };
+            });
+            return true;
+        } catch (error) {
+            // Saving the drawing must continue even if the browser disallows
+            // persisting a FileSystemFileHandle in IndexedDB.
+            console.warn('SAFAR EDGE could not persist the active file handle:', error);
+            return false;
+        }
+    }
+
+    async function restorePersistedFileHandle() {
+        try {
+            const db = await openRecoveryDatabase();
+            if (!db) return false;
+            const record = await new Promise(function (resolve, reject) {
+                const tx = db.transaction(RECOVERY_STORE_NAME, 'readonly');
+                const request = tx.objectStore(RECOVERY_STORE_NAME).get(PERSISTED_FILE_HANDLE_KEY);
+                request.onsuccess = function () { resolve(request.result || null); };
+                request.onerror = function () { reject(request.error || new Error('Could not read the active project file handle.')); };
+            });
+            const handle = record && record.handle;
+            if (!handle || handle.kind !== 'file' || typeof handle.getFile !== 'function') {
+                if (record) await deletePersistedFileHandle();
+                return false;
+            }
+            currentFileHandle = handle;
+            currentFileName = handle.name || record.fileName || 'Untitled.est';
+            // Do not request permission during page load. Save (a user action)
+            // can request it if the browser reports "prompt".
+            return true;
+        } catch (error) {
+            console.warn('SAFAR EDGE could not restore the active project file:', error);
+            currentFileHandle = null;
+            return false;
+        }
+    }
+
+    async function restorePersistedProjectState() {
+        await restorePersistedProjectMetadata();
+        await restorePersistedFileHandle();
     }
 
     async function saveRecoverySnapshot(data) {
@@ -779,9 +942,12 @@
                 }
                 if (permission === 'granted') {
                     await writeToHandle(currentFileHandle, data);
+                    // Persist the browser recovery copy before marking this
+                    // version clean. If IndexedDB fails, the retry path below
+                    // remains active instead of silently losing refresh recovery.
+                    await saveRecoverySnapshot(data);
                     lastAutoSavedVersion = versionBeingSaved;
                     if (dirtyVersion === versionBeingSaved) isDirty = false;
-                    await deleteRecoverySnapshot();
                     getContext().notify('AutoSaved: ' + currentFileName);
                     return;
                 }
@@ -794,14 +960,35 @@
                 lastAutoSavedVersion = versionBeingSaved;
                 if (!recoveryNoticeShown) {
                     recoveryNoticeShown = true;
-                    getContext().notify('AutoSave recovery copy stored in this browser. Use Save As to create your .est file.');
+                    getContext().notify(currentFileHandle
+                        ? 'AutoSave recovery copy stored locally. Use Save to retry writing ' + currentFileName + '.'
+                        : 'AutoSave recovery copy stored locally. Use Save to download an updated .est copy of ' + (currentFileName || 'this project') + '.');
                 }
             }
         } catch (error) {
             console.error('SAFAR EDGE AutoSave failed:', error);
-            try { getContext().notify('AutoSave failed: ' + error.message); } catch (_) {}
+            // If writing the selected .est file fails (for example, the
+            // browser revoked file permission), fall back to a local snapshot
+            // so a refresh still cannot discard the current drawing.
+            try {
+                const fallbackData = buildProjectData();
+                const stored = await saveRecoverySnapshot(fallbackData);
+                if (stored) {
+                    lastAutoSavedVersion = versionBeingSaved;
+                    recoveryNoticeShown = true;
+                    getContext().notify('File AutoSave was unavailable; your working copy was saved in browser recovery storage.');
+                } else {
+                    getContext().notify('AutoSave failed: ' + error.message);
+                }
+            } catch (recoveryError) {
+                console.error('SAFAR EDGE recovery fallback failed:', recoveryError);
+                try { getContext().notify('AutoSave failed: ' + recoveryError.message); } catch (_) {}
+            }
         } finally {
             autoSaveInProgress = false;
+            if (isDirty && dirtyVersion > lastAutoSavedVersion) {
+                scheduleRecoveryAutoSave(500);
+            }
         }
     }
 
@@ -814,24 +1001,39 @@
         try {
             const snapshot = await readRecoverySnapshot();
             if (!snapshot || !snapshot.data) return;
-            const when = snapshot.savedAt ? new Date(snapshot.savedAt).toLocaleString() : 'an earlier session';
-            const name = snapshot.fileName || 'Untitled project';
-            if (!global.confirm('A local AutoSave recovery copy was found for "' + name + '" (' + when + ').\n\nRestore it now?')) {
-                await deleteRecoverySnapshot();
+
+            const snapshotName = snapshot.fileName || 'Untitled project';
+            const activeName = currentFileName || '';
+            const sameActiveProject = !activeName || activeName === snapshotName;
+
+            // When the recovery belongs to the active project, restore it
+            // automatically. A hard refresh should not require the user to
+            // remember to reopen the same .est file or accept a recovery prompt.
+            if (!sameActiveProject && !global.confirm(
+                'A local AutoSave recovery copy was found for "' + snapshotName + '".\n\n' +
+                'The currently remembered project is "' + activeName + '". Restore the recovery copy?'
+            )) {
+                // Never delete a recovery copy merely because the user chooses
+                // not to restore it on this page load.
+                getContext().notify('Recovery copy for ' + snapshotName + ' was kept locally.');
                 return;
             }
+
             isRestoringProject = true;
             try { loadProjectData(snapshot.data); }
             finally { isRestoringProject = false; }
-            if (!currentFileHandle || currentFileName !== snapshot.fileName) {
-                currentFileHandle = null;
-                currentFileName = '';
+
+            // Keep an unsaved drawing unnamed so its first Save still opens
+            // Save As; named existing projects retain their original filename.
+            if (snapshotName !== 'Unsaved project' && (!currentFileName || currentFileName !== snapshotName)) {
+                currentFileName = snapshotName;
             }
-            isDirty = true;
-            dirtyVersion += 1;
+            await persistActiveProjectMetadata(currentFileName);
+            isDirty = false;
             lastAutoSavedVersion = dirtyVersion;
             recoveryNoticeShown = true;
-            getContext().notify('Recovered local AutoSave copy. Use Save As to save it as an .est file.');
+            restoreCadCrosshairCursor();
+            getContext().notify('Restored your latest local working copy: ' + currentFileName + '.');
         } catch (error) {
             console.error('SAFAR EDGE recovery restore failed:', error);
             global.alert('Unable to restore AutoSave recovery copy: ' + error.message);
@@ -887,12 +1089,27 @@
 
     // Start AutoSave after CAD and Luckysheet have completed initialization.
     global.addEventListener('load', async function () {
-        // Do not reconnect this blank workspace to a file used in an earlier
-        // session. AutoSave may target only a file explicitly opened/saved now.
-        await deletePersistedFileHandle();
+        // Restore the previously opened .est handle so Save and AutoSave keep
+        // writing to the same file after a hard refresh.
+        await restorePersistedProjectState();
         startAutoSaveTimer();
         await offerRecoveryOnStartup();
     }, { once: true });
+
+    // Flush pending edits when the user switches tabs or refreshes/closes.
+    // The debounced save above is the primary protection; these lifecycle
+    // hooks provide an additional best-effort final snapshot.
+    global.addEventListener('pagehide', function () {
+        if (autoSaveDebounceTimer) {
+            global.clearTimeout(autoSaveDebounceTimer);
+            autoSaveDebounceTimer = null;
+        }
+        autoSaveProject();
+    });
+
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'hidden') autoSaveProject();
+    });
 
     // Register the .est operating-system launch receiver when supported.
     registerOperatingSystemFileHandler();

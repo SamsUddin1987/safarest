@@ -1,6 +1,43 @@
 // 6. GENERIC TOOL STATE MACHINE & COMMAND EXECUTION
 // Command-specific behaviour lives in commands/<category>/*.js.
 // This file only manages shared CAD tool state and dispatch.
+
+// One cursor controller is used by the workspace, normal selection, and
+// modification commands. The normal cursor is the AutoCAD-style crosshair
+// with a centre pickbox; EXTEND/TRIM use a compact pickbox only.
+const CAD_CURSOR_CROSSHAIR = (() => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M16 0v12M16 20v12M0 16h12M20 16h12" stroke="#00ffcc" stroke-width="1"/><rect x="12" y="12" width="8" height="8" fill="none" stroke="#ffffff" stroke-width="1"/></svg>`;
+    return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 16 16, crosshair`;
+})();
+const CAD_CURSOR_PICKBOX = (() => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" fill="none" stroke="#ffffff" stroke-width="1.2"/></svg>`;
+    return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 6 6, crosshair`;
+})();
+
+function setCadCursorMode(mode = currentTool) {
+    const cursor = mode === 'pan'
+        ? 'grab'
+        : mode === 'panning'
+            ? 'grabbing'
+            : (mode === 'extend' || mode === 'trim')
+                ? CAD_CURSOR_PICKBOX
+                : CAD_CURSOR_CROSSHAIR;
+
+    const container = document.getElementById('cad-canvas-container');
+    const canvas = (typeof renderer !== 'undefined' && renderer && renderer.domElement)
+        ? renderer.domElement
+        : (container && container.querySelector('canvas'));
+
+    if (container) container.style.cursor = cursor;
+    if (canvas) canvas.style.cursor = cursor;
+    return cursor;
+}
+
+// Expose the same state setter to the project loader and command modules.
+window.SafarEdgeCadCursor = {
+    setMode: setCadCursorMode,
+    restore: function () { return setCadCursorMode('select'); }
+};
 function setTool(toolName, toolOptions = null) {
     const previousTool = CAD.getTool(currentTool);
     if (currentTool !== 'select' && previousTool && typeof previousTool.onFinish === 'function') {
@@ -40,6 +77,10 @@ function setTool(toolName, toolOptions = null) {
 
     const tool = CAD.getTool(toolName);
     if (tool && typeof tool.onStart === 'function') tool.onStart(CAD.createContext(), toolOptions);
+
+    // Reassert the canonical cursor after every command start. This prevents
+    // an opened drawing or a previous command from leaving an arrow cursor.
+    setCadCursorMode(toolName);
 
     switch (toolName) {
         case 'line': setCommandPrompt('Command: LINE — Pick start point:'); break;

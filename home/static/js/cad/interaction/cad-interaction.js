@@ -63,6 +63,75 @@ function resolveTopLevelCadEntity(object) {
     return object || null;
 }
 
+// CAD pick aperture: a hit anywhere inside the visible 12px pickbox counts,
+// not only a hit at the exact centre of the cursor. The centre ray is tested
+// first, followed by the eight points around the pickbox perimeter. A small
+// screen-space line threshold also makes thin CAD lines easier to select.
+function getCadIntersectionsAtPointer(objects = null) {
+    if (!raycaster || !camera || !mouse || !renderer) return [];
+
+    const canvas = renderer.domElement;
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.max(1, rect.width);
+    const height = Math.max(1, rect.height);
+    const candidates = objects || drawnObjects.filter(object =>
+        !(object.userData && object.userData.layerLocked)
+    );
+
+    const worldPerPixel = Math.max(
+        1e-7,
+        ((camera.right - camera.left) / (camera.zoom || 1)) / width
+    );
+    // Three.js line/point thresholds are world units; convert a small
+    // tolerance from screen pixels so selection remains consistent at zoom.
+    raycaster.params = raycaster.params || {};
+    raycaster.params.Line = raycaster.params.Line || {};
+    raycaster.params.Points = raycaster.params.Points || {};
+    raycaster.params.Line.threshold = worldPerPixel * 1.25;
+    raycaster.params.Points.threshold = worldPerPixel * 3;
+
+    const aperture = 6; // half of the 12px CAD pickbox
+    const offsets = [
+        [0, 0],
+        [-aperture, -aperture], [0, -aperture], [aperture, -aperture],
+        [-aperture, 0],                         [aperture, 0],
+        [-aperture, aperture],  [0, aperture],  [aperture, aperture]
+    ];
+    const baseMouseX = mouse.x;
+    const baseMouseY = mouse.y;
+
+    // First honour an exact centre hit. This keeps ordinary picking fast and
+    // gives the centre of the pickbox priority when objects overlap.
+    raycaster.setFromCamera(new THREE.Vector2(baseMouseX, baseMouseY), camera);
+    const centreHits = raycaster.intersectObjects(candidates, true);
+    if (centreHits.length) return centreHits;
+
+    // If the centre misses, accept an object touched by any edge/corner of the
+    // pickbox. This is the forgiving CAD selection aperture users expect.
+    const hits = [];
+    offsets.slice(1).forEach(([dx, dy], sampleIndex) => {
+        const samplePointer = new THREE.Vector2(
+            baseMouseX + (dx * 2 / width),
+            baseMouseY - (dy * 2 / height)
+        );
+        raycaster.setFromCamera(samplePointer, camera);
+        raycaster.intersectObjects(candidates, true).forEach(hit => {
+            hits.push({ ...hit, _cadPickSample: sampleIndex + 1 });
+        });
+    });
+
+    // Prefer the nearest depth; when distances are effectively equal, prefer
+    // the closest pickbox sample.
+    hits.sort((a, b) => {
+        const delta = a.distance - b.distance;
+        return Math.abs(delta) > 1e-5 ? delta : a._cadPickSample - b._cadPickSample;
+    });
+    return hits;
+}
+
+window.CADPicking = window.CADPicking || {};
+window.CADPicking.getIntersections = getCadIntersectionsAtPointer;
+
 function updateCadRolloverHighlight() {
     // PAN and active drags should not produce object rollover. All other
     // commands (including EXTEND/TRIM/MOVE/COPY and drawing tools) do.
@@ -71,11 +140,10 @@ function updateCadRolloverHighlight() {
         return;
     }
 
-    raycaster.setFromCamera(mouse, camera);
     const pickable = drawnObjects.filter(object =>
         !(object.userData && object.userData.layerLocked)
     );
-    const hits = raycaster.intersectObjects(pickable, true);
+    const hits = getCadIntersectionsAtPointer(pickable);
     let nextHover = null;
 
     for (const hit of hits) {
@@ -200,18 +268,6 @@ function onMouseMove(event) {
         if (gridSnapOn && !gripOtrackActive && !currentSnap) {
             gripPoint.x = Math.round(gripPoint.x / GRID_SPACING) * GRID_SPACING;
             gripPoint.y = Math.round(gripPoint.y / GRID_SPACING) * GRID_SPACING;
-        }
-
-        // ORTHO constrains selected-vertex and centre-grip movement
-        // (STRETCH-style editing) without changing OSNAP acquisition.
-        if (orthoOn && drag.startPoint) {
-            const dx = gripPoint.x - drag.startPoint.x;
-            const dy = gripPoint.y - drag.startPoint.y;
-            if (Math.abs(dx) >= Math.abs(dy)) {
-                gripPoint.y = drag.startPoint.y;
-            } else {
-                gripPoint.x = drag.startPoint.x;
-            }
         }
 
         if (gripPoint.distanceTo(drag.startPoint) > 1e-7) {
@@ -382,11 +438,7 @@ function onCanvasClick(event) {
     // - Shift + click removes an already-selected entity.
     // - Clicking empty space never clears the current selection.
     if (currentTool === 'select') {
-        raycaster.setFromCamera(mouse, camera);
-        const intersects = raycaster.intersectObjects(
-            drawnObjects.filter(o => !(o.userData && o.userData.layerLocked)),
-            true
-        );
+        const intersects = getCadIntersectionsAtPointer();
 
         if (intersects.length > 0) {
             let clickedObj = intersects[0].object;
@@ -569,7 +621,7 @@ function onMouseUp(event) {
     if (event.button === 0 && selectionGripDrag) {
         const drag = selectionGripDrag;
         selectionGripDrag = null;
-        renderer.domElement.style.cursor = '';
+        setCadCursorMode(currentTool);
         if (drag.moved) {
             CAD.createContext().recordModify([drag.object], drag.before);
             updateSelectionGrips();
@@ -584,7 +636,7 @@ function onMouseUp(event) {
     // Finish PAN drag; remain in PAN mode for another drag
     if (event.button === 0 && currentTool === 'pan' && isPanning) {
         isPanning = false;
-        renderer.domElement.style.cursor = 'grab';
+        setCadCursorMode(currentTool);
 
         suppressNextClick = true;
         setTimeout(() => {
@@ -600,7 +652,7 @@ function onMouseUp(event) {
         const drag = objectDrag;
         objectDrag = null;
 
-        renderer.domElement.style.cursor = '';
+        setCadCursorMode(currentTool);
 
         if (drag.moved &&
             (Math.abs(drag.dx) > 0.000001 ||
@@ -631,8 +683,7 @@ function onMouseUp(event) {
 
     if (event.button === 1 && isPanning) {
         isPanning = false;
-        renderer.domElement.style.cursor =
-            currentTool === 'pan' ? 'grab' : '';
+        setCadCursorMode(currentTool);
         return;
     }
     if (!boxSel.down) return;

@@ -32,6 +32,22 @@ function removeEntity(obj) {
 }
 
 function undo() {
+    // While PLINE is still being drawn, Ctrl+Z must remove the most recent
+    // vertex/segment from the in-progress chain instead of undoing an older
+    // completed drawing entity. This mirrors LINE's segment-by-segment undo.
+    // Once PLINE is finished, its committed entity remains one normal Undo step.
+    if (currentTool === 'polyline' && isDrawing && currentPoints.length > 0) {
+        const activeTool = window.CAD
+            ? window.CAD.getTool('polyline')
+            : null;
+        const context = window.CAD ? window.CAD.createContext() : null;
+
+        if (activeTool && typeof activeTool.onOption === 'function' && context) {
+            activeTool.onOption('UNDO', context);
+            return;
+        }
+    }
+
     if (undoStack.length === 0) { setCommandPrompt('Nothing to undo.'); return; }
     const a = undoStack.pop();
     clearSelection();
