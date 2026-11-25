@@ -2,16 +2,21 @@
  * SAFAR EDGE — CAD CLOSED-SHAPE MEASUREMENT TAKEOFF
  *
  * Closed native POLYLINE, RECTANGLE/SQUARE, and CIRCLE entities are grouped by layer and overall
- * length/width. The measurement table occupies columns A:I:
- * Sl No, Description, Nos, Length, Width, Height, Quantity, Unit, Remarks.
+ * length/width. The measurement table occupies columns A:J:
+ * Sl No, Description, Nos, Nos (Factor), Length, Width, Height, Quantity, Unit, Remarks.
  *
- * Length and width are the overall plan extents. Height is deliberately
- * left blank for future 3D takeoff. Quantity = Nos × Length × Width.
+ * Length and width are overall plan extents converted from the CAD base unit (mm)
+ * to the selected output unit. Height is reserved for future 3D takeoff.
+ * Quantity = Nos × Nos (Factor) × Length × Width.
  */
 (function (global) {
     'use strict';
 
     const HEADERS = [
+        'Sl No', 'Description', 'Nos', 'Nos (Factor)', 'Length', 'Width',
+        'Height', 'Quantity', 'Unit', 'Remarks'
+    ];
+    const LEGACY_HEADERS = [
         'Sl No', 'Description', 'Nos', 'Length', 'Width',
         'Height', 'Quantity', 'Unit', 'Remarks'
     ];
@@ -34,9 +39,8 @@
     let isSyncing = false;
     let hasWarnedAboutSheet = false;
     const AUTO_UPDATE_STORAGE_KEY = 'safaredge.cad.measurements.autoUpdate';
+    const OUTPUT_UNIT_STORAGE_KEY = 'safaredge.cad.measurements.outputUnit';
     let autoUpdateEnabled = false;
-    let autoUpdateTimer = null;
-    let lastAutoSignature = null;
     let settingsMenuEl = null;
     let outsideMenuHandler = null;
 
@@ -69,11 +73,14 @@
         return data.some(row => Array.isArray(row) && row.some(value => cellText(value) !== ''));
     }
 
-    function headerMatches(sheet) {
-        return HEADERS.every((heading, col) =>
+    function matchesHeaders(sheet, headers) {
+        return headers.every((heading, col) =>
             String(getCell(sheet, 0, col)).trim().toLowerCase() === heading.toLowerCase()
         );
     }
+
+    function headerMatches(sheet) { return matchesHeaders(sheet, HEADERS); }
+    function legacyHeaderMatches(sheet) { return matchesHeaders(sheet, LEGACY_HEADERS); }
 
     function getWorkbookSheets() {
         if (!global.luckysheet || typeof global.luckysheet.getAllSheets !== 'function') {
@@ -92,6 +99,8 @@
 
         const matching = sheets.find(headerMatches);
         if (matching) return matching;
+        const legacy = sheets.find(legacyHeaderMatches);
+        if (legacy) return legacy;
 
         // A blank worksheet can safely become the measurement worksheet.
         const blank = sheets.find(sheet => !hasSheetContent(sheet));
@@ -124,6 +133,10 @@
 
     function ensureHeaders(sheet, order) {
         if (headerMatches(sheet)) return false;
+        if (legacyHeaderMatches(sheet)) {
+            HEADERS.forEach((heading, col) => writeCell(order, 0, col, heading));
+            return true;
+        }
         if (hasSheetContent(sheet)) return false;
         HEADERS.forEach((heading, col) => writeCell(order, 0, col, heading));
         return true;
@@ -274,64 +287,89 @@
         return 0;
     }
 
-    function getDisplayUnit(context) {
-        try {
-            const style = global.CAD && global.CAD.Dimension &&
-                typeof global.CAD.Dimension.currentStyle === 'function'
-                ? global.CAD.Dimension.currentStyle()
-                : null;
-            const unit = style && style.displayUnit ? String(style.displayUnit) : '';
-            if (UNIT_FACTORS[unit]) return unit;
-        } catch (_) {}
-
+    function getCurrentDrawingUnit(context) {
         const state = context && context.getState ? context.getState() : {};
-        const fallback = state && state.units ? String(state.units) : 'mm';
-        return UNIT_FACTORS[fallback] ? fallback : 'mm';
+        const unit = state && state.units ? String(state.units).toLowerCase() : 'mm';
+        return UNIT_FACTORS[unit] ? unit : 'mm';
     }
 
-    function buildMeasurementRows(objects, precision, displayUnit) {
+    function defaultOutputUnit(currentUnit) {
+        if (currentUnit === 'mm' || currentUnit === 'cm' || currentUnit === 'm') return 'm';
+        if (currentUnit === 'inch' || currentUnit === 'ft') return 'ft';
+        return 'm';
+    }
+
+    function getOutputUnit(currentUnit) {
+        try {
+            const stored = String(global.localStorage.getItem(OUTPUT_UNIT_STORAGE_KEY) || '').toLowerCase();
+            if (UNIT_FACTORS[stored]) return stored;
+        } catch (_) {}
+        return defaultOutputUnit(currentUnit || 'mm');
+    }
+
+    function setOutputUnit(unit) {
+        const normalized = String(unit || '').toLowerCase();
+        if (!UNIT_FACTORS[normalized]) return false;
+        try { global.localStorage.setItem(OUTPUT_UNIT_STORAGE_KEY, normalized); } catch (_) {}
+        return true;
+    }
+
+    function conversionDescription(currentUnit, outputUnit) {
+        const outputFactor = UNIT_FACTORS[outputUnit] || 1000;
+        // CAD model coordinates are stored in millimetres by cad-core.js.
+        const linear = 1 / outputFactor;
+        const area = linear * linear;
+        const sourceLabel = 'mm';
+        const lengthLabel = outputUnit;
+        const areaLabel = AREA_UNITS[outputUnit] || 'm²';
+        return {
+            linear: `1 ${sourceLabel} = ${Number(linear.toPrecision(8))} ${lengthLabel}`,
+            area: `1 mm² = ${Number(area.toPrecision(8))} ${areaLabel}`,
+            note: `Drawing unit setting: ${currentUnit}. CAD geometry is stored in mm; measurements are converted from mm to ${outputUnit}.`
+        };
+    }
+
+    function buildMeasurementRows(objects, precision, currentUnit, outputUnit) {
         const decimals = Math.max(0, Math.min(6, Number(precision) || 0));
-        const factor = UNIT_FACTORS[displayUnit] || 1;
+        const targetUnit = UNIT_FACTORS[outputUnit] ? outputUnit : defaultOutputUnit(currentUnit || 'mm');
+        const mmPerOutputUnit = UNIT_FACTORS[targetUnit] || 1000;
+        const mmToOutput = 1 / mmPerOutputUnit;
         const groups = new Map();
 
         (objects || []).forEach(object => {
             try {
-    
                 const kind = getEntityKind(object);
                 if (!kind) return;
-    
+
                 let length;
                 let width;
                 if (kind === 'circle') {
-                    const radius = getCircleRadius(object);
-                    if (!Number.isFinite(radius) || radius <= 1e-9) return;
-                    // As requested: radius is recorded in both Length and Width.
-                    length = Number((radius / factor).toFixed(decimals));
+                    const radiusMm = getCircleRadius(object);
+                    if (!Number.isFinite(radiusMm) || radiusMm <= 1e-9) return;
+                    // Circle radius is recorded in both Length and Width.
+                    length = Number((radiusMm * mmToOutput).toFixed(decimals));
                     width = length;
                 } else {
                     const bounds = getBounds(object);
                     if (!bounds || bounds.length <= 1e-9 || bounds.width <= 1e-9) return;
-                    length = Number((bounds.length / factor).toFixed(decimals));
-                    width = Number((bounds.width / factor).toFixed(decimals));
+                    length = Number((bounds.length * mmToOutput).toFixed(decimals));
+                    width = Number((bounds.width * mmToOutput).toFixed(decimals));
                 }
-    
+
                 const layer = String(
                     object.userData && object.userData.layer
                         ? object.userData.layer
                         : '0'
                 );
-                const key = [
-                    kind,
-                    layer,
-                    length.toFixed(decimals),
-                    width.toFixed(decimals)
-                ].join('|');
-    
+                const nosFactor = kind === 'circle' ? 3.142 : 1;
+                const key = [kind, layer, nosFactor, length.toFixed(decimals), width.toFixed(decimals)].join('|');
+
                 if (!groups.has(key)) {
                     groups.set(key, {
                         kind: kind,
                         description: layer,
                         nos: 0,
+                        nosFactor: nosFactor,
                         length: length,
                         width: width
                     });
@@ -343,55 +381,49 @@
             }
         });
 
-        const unit = AREA_UNITS[displayUnit] || 'mm²';
-        return Array.from(groups.values()).map((group, index) => {
-            const unitArea = group.kind === 'circle'
-                ? 3.142 * group.length * group.width
-                : group.length * group.width;
-
-            return {
-                slNo: index + 1,
-                description: group.description,
-                nos: group.nos,
-                length: group.length,
-                width: group.width,
-                height: '',
-                quantity: Number((group.nos * unitArea).toFixed(decimals)),
-                unit: unit,
-                remarks: ''
-            };
-        });
+        const unit = AREA_UNITS[targetUnit] || 'm²';
+        return Array.from(groups.values()).map((group, index) => ({
+            slNo: index + 1,
+            description: group.description,
+            nos: group.nos,
+            nosFactor: group.nosFactor,
+            length: group.length,
+            width: group.width,
+            height: '',
+            quantity: Number((group.nos * group.nosFactor * group.length * group.width).toFixed(6)),
+            unit: unit,
+            remarks: ''
+        }));
     }
 
     function readExistingRows(sheet) {
+        const isLegacy = legacyHeaderMatches(sheet);
         const sparse = Array.isArray(sheet.celldata) ? sheet.celldata : [];
         const sparseMax = sparse.reduce((max, cell) => {
-            if (!cell || Number(cell.c) > 8) return max;
+            if (!cell || Number(cell.c) > 9) return max;
             return Math.max(max, Number(cell.r) || 0);
         }, 0);
         const dense = Array.isArray(sheet.data) ? sheet.data : [];
         let denseMax = 0;
         dense.forEach((row, rowIndex) => {
-            if (Array.isArray(row) && row.slice(0, 9).some(value => cellText(value) !== '')) {
+            if (Array.isArray(row) && row.slice(0, 10).some(value => cellText(value) !== '')) {
                 denseMax = Math.max(denseMax, rowIndex);
             }
         });
         const maxRow = Math.max(sparseMax, denseMax);
-
         const preserved = new Map();
         for (let row = 1; row <= maxRow; row++) {
             const description = String(getCell(sheet, row, 1) || '').trim();
-            const length = Number(getCell(sheet, row, 3));
-            const width = Number(getCell(sheet, row, 4));
+            const length = Number(getCell(sheet, row, isLegacy ? 3 : 4));
+            const width = Number(getCell(sheet, row, isLegacy ? 4 : 5));
             if (!description || !Number.isFinite(length) || !Number.isFinite(width)) continue;
-
             const key = [description, length, width].join('|');
             preserved.set(key, {
-                unit: getCell(sheet, row, 7) || '',
-                remarks: getCell(sheet, row, 8) || ''
+                unit: getCell(sheet, row, isLegacy ? 7 : 8) || '',
+                remarks: getCell(sheet, row, isLegacy ? 8 : 9) || ''
             });
         }
-        return { maxRow, preserved };
+        return { maxRow, preserved, isLegacy };
     }
 
     function ensureMeasurementSheetForManualSync() {
@@ -402,6 +434,9 @@
 
         // Always prefer a worksheet already carrying the exact measurement headings.
         let sheet = sheets.find(headerMatches);
+        if (sheet) return { ok: true, sheet: sheet, created: false };
+        // Migrate the previous nine-column measurement layout in place.
+        sheet = sheets.find(legacyHeaderMatches);
         if (sheet) return { ok: true, sheet: sheet, created: false };
 
         // If the workbook has a genuinely empty sheet, use it rather than touching user data.
@@ -449,22 +484,23 @@
         if (!sheet) throw new Error('Measurement worksheet was not identified.');
         const sheets = getWorkbookSheets();
         const order = sheetOrder(sheet, sheets);
-        // This sheet was selected only because it already has the exact headings
-        // or was empty, so it is safe to initialise its A:I header row.
-        const headerChanged = ensureHeaders(sheet, order);
+        // This sheet was selected because it has the new/legacy measurement headings
+        // or was empty, so it is safe to initialise its A:J header row.
         const existing = readExistingRows(sheet);
+        const headerChanged = ensureHeaders(sheet, order);
 
         // Preserve Unit and Remarks when the same layer and dimensions already exist.
         rows.forEach(row => {
             const key = [row.description, row.length, row.width].join('|');
             const previous = existing.preserved.get(key);
             if (previous) {
-                if (previous.unit !== '') row.unit = previous.unit;
+                // The selected output unit always controls the Unit column.
+                // Preserve only the user's Remarks when the object key still matches.
                 row.remarks = previous.remarks;
             }
         });
 
-        // Clear only A:I measurement rows, leaving every other column untouched.
+        // Clear only A:J measurement rows, leaving every other column untouched.
         for (let row = 1; row <= existing.maxRow; row++) {
             for (let col = 0; col < HEADERS.length; col++) {
                 writeCell(order, row, col, '');
@@ -476,6 +512,7 @@
                 index + 1,
                 item.description,
                 item.nos,
+                item.nosFactor,
                 item.length,
                 item.width,
                 '', // Height intentionally reserved for future 3D use.
@@ -502,7 +539,9 @@
         return { order: order, sheetName: sheet.name || 'CAD Measurements' };
     }
 
-    function syncFromMenu() {
+    function syncFromMenu(options) {
+        options = options || {};
+        const isAutomatic = options.source === 'auto';
         if (!global.CAD || typeof global.CAD.createContext !== 'function') {
             return { ok: false, message: 'CAD is not ready. Wait for the drawing workspace to finish loading.' };
         }
@@ -512,19 +551,27 @@
         }
         if (isSyncing) return { ok: false, message: 'A measurement update is already running. Please wait.' };
 
-        const ensured = ensureMeasurementSheetForManualSync();
-        if (!ensured.ok) return ensured;
-
         let objects;
         let rows;
         try {
             const context = global.CAD.createContext();
             objects = context && typeof context.getObjects === 'function' ? context.getObjects() : [];
             const state = context && typeof context.getState === 'function' ? context.getState() : {};
-            rows = buildMeasurementRows(objects, state.precision, getDisplayUnit(context));
+            const currentUnit = getCurrentDrawingUnit(context);
+            const outputUnit = getOutputUnit(currentUnit);
+            rows = buildMeasurementRows(objects, state.precision, currentUnit, outputUnit);
         } catch (error) {
             return { ok: false, message: 'Unable to read CAD objects: ' + error.message };
         }
+
+        // Do not create a blank takeoff worksheet for automatic updates when
+        // the edit produced no supported closed-shape measurement rows.
+        if (isAutomatic && rows.length === 0 && !findMeasurementSheet()) {
+            return { ok: true, objectCount: 0, rowCount: 0, sheetName: '', message: '' };
+        }
+
+        const ensured = ensureMeasurementSheetForManualSync();
+        if (!ensured.ok) return ensured;
 
         const supportedCount = objects.reduce((count, object) => {
             try { return count + (getEntityKind(object) ? 1 : 0); }
@@ -561,11 +608,13 @@
         const order = sheetOrder(sheet, sheets);
         const context = global.CAD.createContext();
         const state = context.getState();
-        const displayUnit = getDisplayUnit(context);
+        const currentUnit = getCurrentDrawingUnit(context);
+        const outputUnit = getOutputUnit(currentUnit);
         const rows = buildMeasurementRows(
             context.getObjects(),
             state.precision,
-            displayUnit
+            currentUnit,
+            outputUnit
         );
 
         isSyncing = true;
@@ -627,6 +676,45 @@
         title.style.cssText = 'font-weight:600;padding:2px 2px 8px;border-bottom:1px solid #444;margin-bottom:8px;';
         menu.appendChild(title);
 
+        const cadContext = global.CAD && typeof global.CAD.createContext === 'function'
+            ? global.CAD.createContext() : null;
+        const currentUnit = getCurrentDrawingUnit(cadContext);
+        const selectedOutputUnit = getOutputUnit(currentUnit);
+        const currentLine = global.document.createElement('div');
+        currentLine.style.cssText = 'padding:5px 2px;color:#ccc;';
+        currentLine.textContent = 'Current drawing unit: ' + currentUnit.toUpperCase();
+        menu.appendChild(currentLine);
+
+        const outputLabel = global.document.createElement('label');
+        outputLabel.style.cssText = 'display:flex;flex-direction:column;gap:5px;padding:5px 2px;color:#eee;';
+        const outputCaption = global.document.createElement('span');
+        outputCaption.textContent = 'Measurement output unit';
+        const outputSelect = global.document.createElement('select');
+        outputSelect.style.cssText = 'width:100%;padding:5px;background:#333;color:#fff;border:1px solid #666;border-radius:3px;';
+        [['mm','Millimetre (mm)'],['cm','Centimetre (cm)'],['m','Metre (m)'],['inch','Inch (in)'],['ft','Foot (ft)']].forEach(([value, labelText]) => {
+            const option = global.document.createElement('option');
+            option.value = value; option.textContent = labelText;
+            outputSelect.appendChild(option);
+        });
+        outputSelect.value = selectedOutputUnit;
+        outputLabel.appendChild(outputCaption);
+        outputLabel.appendChild(outputSelect);
+        menu.appendChild(outputLabel);
+
+        const conversion = global.document.createElement('div');
+        conversion.style.cssText = 'color:#9ca3af;font-size:11px;line-height:1.45;padding:5px 2px 7px;border-bottom:1px solid #444;margin-bottom:5px;';
+        const updateConversionText = () => {
+            const details = conversionDescription(currentUnit, outputSelect.value);
+            conversion.textContent = details.note + ' ' + details.linear + '; ' + details.area;
+        };
+        updateConversionText();
+        outputSelect.addEventListener('change', () => {
+            setOutputUnit(outputSelect.value);
+            updateConversionText();
+            if (autoUpdateEnabled) scheduleSync(0);
+        });
+        menu.appendChild(conversion);
+
         const label = global.document.createElement('label');
         label.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 2px;';
         const checkbox = global.document.createElement('input');
@@ -640,7 +728,7 @@
         menu.appendChild(label);
 
         const note = global.document.createElement('div');
-        note.textContent = 'Default: OFF. Manual update remains available by left-clicking MEASURE.';
+        note.textContent = 'Default: OFF. When ON, updates run after CAD edits (not continuously). Manual update remains available by left-clicking MEASURE.';
         note.style.cssText = 'color:#aaa;font-size:11px;line-height:1.4;padding:7px 2px 1px;max-width:245px;';
         menu.appendChild(note);
 
@@ -662,86 +750,45 @@
         global.document.addEventListener('pointerdown', outsideMenuHandler, true);
     }
 
-    function getCurrentMeasurementSnapshot() {
-        if (!global.CAD || typeof global.CAD.createContext !== 'function') return null;
-        const context = global.CAD.createContext();
-        const objects = context && typeof context.getObjects === 'function' ? context.getObjects() : [];
-        const state = context && typeof context.getState === 'function' ? context.getState() : {};
-        const rows = buildMeasurementRows(objects, state.precision, getDisplayUnit(context));
-        const supportedCount = objects.reduce((count, object) => {
-            try { return count + (getEntityKind(object) ? 1 : 0); }
-            catch (_) { return count; }
-        }, 0);
-        return {
-            objects: objects,
-            rows: rows,
-            supportedCount: supportedCount,
-            signature: JSON.stringify({ supportedCount: supportedCount, rows: rows })
-        };
-    }
-
-    function pollAutoUpdate() {
-        if (!autoUpdateEnabled || isSyncing) return;
-        if (!global.luckysheet || typeof global.luckysheet.setCellValue !== 'function') return;
-        let snapshot;
-        try {
-            snapshot = getCurrentMeasurementSnapshot();
-        } catch (error) {
-            // Unsupported or irregular geometry is ignored without user-facing errors.
-            console.debug('SAFAR EDGE measurement scan skipped an unsupported entity.', error);
-            return;
-        }
-        if (!snapshot) return;
-        if (snapshot.signature === lastAutoSignature) return;
-
-        // Do not create an empty takeoff sheet merely because Auto Update was enabled
-        // before the drawing contained any supported closed objects.
-        if (snapshot.rows.length === 0 && !findMeasurementSheet()) {
-            lastAutoSignature = snapshot.signature;
-            return;
-        }
-
-        const result = syncFromMenu({ source: 'auto' });
-        if (result && result.ok) lastAutoSignature = snapshot.signature;
-    }
-
-    function stopAutoUpdate() {
-        if (autoUpdateTimer !== null) {
-            global.clearInterval(autoUpdateTimer);
-            autoUpdateTimer = null;
-        }
-    }
-
     function setAutoUpdateEnabled(enabled) {
         autoUpdateEnabled = !!enabled;
         try {
             global.localStorage.setItem(AUTO_UPDATE_STORAGE_KEY, autoUpdateEnabled ? '1' : '0');
         } catch (_) {}
         updateMeasureButton();
+
         if (autoUpdateEnabled) {
-            lastAutoSignature = null;
-            pollAutoUpdate();
-            if (autoUpdateTimer === null) {
-                autoUpdateTimer = global.setInterval(pollAutoUpdate, 900);
-            }
-        } else {
-            stopAutoUpdate();
+            // Perform one reconciliation when enabled. Subsequent updates are
+            // triggered only by completed CAD mutation/history events.
+            scheduleSync(0);
+        } else if (syncTimer !== null) {
+            global.clearTimeout(syncTimer);
+            syncTimer = null;
         }
         return autoUpdateEnabled;
     }
 
     function scheduleSync(delay) {
-        if (!autoUpdateEnabled) return;
-        if (syncTimer) global.clearTimeout(syncTimer);
+        if (!autoUpdateEnabled || isSyncing) return;
+        if (syncTimer !== null) global.clearTimeout(syncTimer);
+        const wait = Number.isFinite(Number(delay)) ? Math.max(0, Number(delay)) : 180;
         syncTimer = global.setTimeout(function () {
             syncTimer = null;
-            pollAutoUpdate();
-        }, Number.isFinite(Number(delay)) ? Number(delay) : 120);
+            if (!autoUpdateEnabled || isSyncing) return;
+            if (!global.luckysheet || typeof global.luckysheet.setCellValue !== 'function') return;
+
+            const result = syncFromMenu({ source: 'auto' });
+            if (!result || !result.ok) {
+                // Keep automatic updates quiet; manual MEASURE provides
+                // actionable feedback if the workbook is not ready.
+                console.debug('SAFAR EDGE automatic measurement update was skipped.', result && result.message);
+            }
+        }, wait);
     }
 
     function initialize() {
-        // Automatic measurement updates are intentionally OFF unless the user
-        // explicitly enabled them from the MEASURE status-button context menu.
+        // Auto Update is OFF unless the user explicitly enabled it earlier.
+        // There is deliberately no interval, polling loop or idle drawing scan.
         autoUpdateEnabled = readAutoUpdatePreference();
         updateMeasureButton();
         const button = global.document && global.document.getElementById('cad-st-measure');
@@ -753,11 +800,10 @@
                 showSettings(event.clientX, event.clientY);
             });
         }
-        stopAutoUpdate();
-        if (autoUpdateEnabled) {
-            autoUpdateTimer = global.setInterval(pollAutoUpdate, 900);
-            pollAutoUpdate();
-        }
+
+        // Reconcile once on startup only if Auto Update was previously enabled.
+        // Project restoration schedules another sync after its workbook is ready.
+        if (autoUpdateEnabled) scheduleSync(300);
     }
 
     global.SafarEdgeMeasurements = {
@@ -771,6 +817,10 @@
         isAutoUpdateEnabled: () => autoUpdateEnabled,
         // Exposed for deterministic unit testing and diagnostics.
         buildMeasurementRows: buildMeasurementRows,
-        getEntityKind: getEntityKind
+        getEntityKind: getEntityKind,
+        getCurrentDrawingUnit: getCurrentDrawingUnit,
+        getOutputUnit: getOutputUnit,
+        setOutputUnit: setOutputUnit,
+        conversionDescription: conversionDescription
     };
 })(window);
