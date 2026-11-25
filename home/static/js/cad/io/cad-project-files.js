@@ -213,6 +213,15 @@
             data: sheets,
             hook: createSpreadsheetHooks()
         });
+
+        // Rebuild the CAD measurement schedule only after the restored
+        // workbook has been created, so the existing project sheet is retained.
+        global.setTimeout(function () {
+            if (global.SafarEdgeMeasurements &&
+                typeof global.SafarEdgeMeasurements.scheduleSync === 'function') {
+                global.SafarEdgeMeasurements.scheduleSync(250);
+            }
+        }, 300);
     }
 
     function restoreCadCrosshairCursor() {

@@ -5,6 +5,13 @@ function markSafarProjectDirty() {
     if (manager && typeof manager.markDirty === 'function') manager.markDirty();
 }
 
+function scheduleCadMeasurementTakeoffSync() {
+    const takeoff = window.SafarEdgeMeasurements;
+    if (takeoff && typeof takeoff.scheduleSync === 'function') {
+        takeoff.scheduleSync();
+    }
+}
+
 function addEntity(obj, record = true) {
     if (obj) {
         obj.userData = obj.userData || {};
@@ -20,6 +27,7 @@ function addEntity(obj, record = true) {
         undoStack.push({ type: 'add', objs: [obj] });
         redoStack = [];
         markSafarProjectDirty();
+        scheduleCadMeasurementTakeoffSync();
     }
 }
 
@@ -29,6 +37,7 @@ function removeEntity(obj) {
     selectedObjects = selectedObjects.filter(o => o !== obj);
     if (hoverObject === obj) hoverObject = null;
     markSafarProjectDirty();
+    scheduleCadMeasurementTakeoffSync();
 }
 
 function undo() {
@@ -87,6 +96,7 @@ function undo() {
     }
     redoStack.push(a);
     markSafarProjectDirty();
+    scheduleCadMeasurementTakeoffSync();
     notify('Undo.');
 }
 
@@ -114,6 +124,7 @@ function redo() {
     }
     undoStack.push(a);
     markSafarProjectDirty();
+    scheduleCadMeasurementTakeoffSync();
     notify('Redo.');
 }
 

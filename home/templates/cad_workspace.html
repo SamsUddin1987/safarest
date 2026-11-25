@@ -694,12 +694,12 @@
 
 <!-- CORE -->
 <script src="{% static 'js/cad/core/cad-registry.js' %}?v=20261123-5"></script>
-<script src="{% static 'js/cad/core/cad-core.js' %}?v=20261125-4"></script>
+<script src="{% static 'js/cad/core/cad-core.js' %}?v=20261125-measure-1"></script>
 
 <!-- DRAW COMMANDS -->
 <!-- INDEPENDENT DRAW COMMANDS -->
 <script src="{% static 'js/cad/commands/draw/line.js' %}?v=20261123-5"></script>
-<script src="{% static 'js/cad/commands/draw/polyline.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/draw/polyline.js' %}?v=20261125-measure-1"></script>
 <script src="{% static 'js/cad/commands/draw/rectangle.js' %}?v=20261123-5"></script>
 <script src="{% static 'js/cad/commands/draw/circle.js' %}?v=20261123-5"></script>
 <script src="{% static 'js/cad/commands/draw/text.js' %}?v=20261123-5"></script>
@@ -718,7 +718,7 @@
 <script src="{% static 'js/cad/commands/modify/explode.js' %}?v=20261123-5"></script>
 
 <!-- DIMENSION ENGINE & STYLES -->
-<script src="{% static 'js/cad/core/cad-dimension-engine.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/core/cad-dimension-engine.js' %}?v=20261125-measure-1"></script>
 <script src="{% static 'js/cad/commands/dimension/dimension-tools-common.js' %}?v=20261123-5"></script>
 <script src="{% static 'js/cad/commands/dimension/dim-linear.js' %}?v=20261123-5"></script>
 <script src="{% static 'js/cad/commands/dimension/dim-aligned.js' %}?v=20261123-5"></script>
@@ -736,7 +736,7 @@
 <script src="{% static 'js/cad/interaction/cad-snapping.js' %}?v=20261125-extend-trim-clean"></script>
 
 <!-- HISTORY -->
-<script src="{% static 'js/cad/history/cad-history-view.js' %}?v=20261125-pline-undo-1"></script>
+<script src="{% static 'js/cad/history/cad-history-view.js' %}?v=20261125-measure-1"></script>
 
 <!-- VIEW NAVIGATION -->
 <script src="{% static 'js/cad/commands/view/view-navigation.js' %}?v=20261124-1"></script>
@@ -756,7 +756,9 @@
 <script src="{% static 'js/cad/io/cad-import.js' %}?v=20261123-5"></script>
 
 <!-- NATIVE PROJECT FILE SYSTEM -->
-<script src="{% static 'js/cad/io/cad-project-files.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/io/cad-project-files.js' %}?v=20261125-measure-1"></script>
+<!-- CAD CLOSED-POLYLINE MEASUREMENT TAKEOFF -->
+<script src="{% static 'js/cad/io/cad-measurement-takeoff.js' %}?v=20261125-measure-2"></script>
 
 <script>
 // ============================================
@@ -932,6 +934,10 @@ document.addEventListener("DOMContentLoaded", function() {
             // Connect the initial workbook to the local .est AutoSave system.
             hook: window.SafarEdgeProjectFiles.createSpreadsheetHooks()
         });
+
+        if (window.SafarEdgeMeasurements) {
+            window.SafarEdgeMeasurements.initialize();
+        }
 
         const sheetEl = document.getElementById('luckysheet');
 

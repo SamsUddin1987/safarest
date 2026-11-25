@@ -548,6 +548,10 @@
     }
     function applyLayerStates() {
         try { CAD.createContext().getObjects().forEach(applyLayerState); } catch (_) {}
+        if (global.SafarEdgeMeasurements &&
+            typeof global.SafarEdgeMeasurements.scheduleSync === 'function') {
+            global.SafarEdgeMeasurements.scheduleSync();
+        }
     }
     function openLayerManager() {
         const ui=openDialog('Layer Properties Manager','Organize drawing layers, appearance and layer state');

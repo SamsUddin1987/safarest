@@ -871,6 +871,7 @@ function createCADCommandContext() {
             undoStack.push({ type: 'modify', before, after: this.captureObjects(objects) });
             redoStack = [];
             if (window.SafarEdgeProjectFiles) window.SafarEdgeProjectFiles.markDirty();
+            if (window.SafarEdgeMeasurements) window.SafarEdgeMeasurements.scheduleSync();
         },
         recordReplace(beforeObjects, afterObjects) {
             undoStack.push({
@@ -880,6 +881,7 @@ function createCADCommandContext() {
             });
             redoStack = [];
             if (window.SafarEdgeProjectFiles) window.SafarEdgeProjectFiles.markDirty();
+            if (window.SafarEdgeMeasurements) window.SafarEdgeMeasurements.scheduleSync();
         },
         setSelection(objects) {
             clearSelection();

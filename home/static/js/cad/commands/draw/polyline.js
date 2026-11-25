@@ -44,9 +44,15 @@
 
         const polyline = new THREE.Line(geometry, material);
 
+        const first = committedPoints[0];
+        const last = committedPoints[committedPoints.length - 1];
+        const closed = committedPoints.length > 2 &&
+            first.distanceTo(last) <= 1e-7;
+
         polyline.userData = {
             type: 'polyline',
             points: committedPoints,
+            closed: closed,
             originalColor: 0x00ff00
         };
 
