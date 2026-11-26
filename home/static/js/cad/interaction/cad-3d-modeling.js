@@ -17,6 +17,8 @@
     let drag = null;
     let lightsAdded = false;
     let button = null;
+    let fillButton = null;
+    let solidFillEnabled = true;
 
     const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -27,13 +29,82 @@
 
     function updateButton() {
         button = global.document.getElementById('cad-st-3d-view');
-        if (!button) return;
-        button.textContent = mode === '3D' ? '3D ✓' : '2D / 3D';
-        button.classList.toggle('active', mode === '3D');
-        button.setAttribute('aria-pressed', mode === '3D' ? 'true' : 'false');
-        button.title = mode === '3D'
-            ? '3D mode: orbit with left-drag, pan with middle/right-drag, zoom with wheel. Click to return to 2D.'
-            : 'Switch between 2D drafting and 3D modelling/navigation';
+        if (button) {
+            button.textContent = mode === '3D' ? '3D ✓' : '2D / 3D';
+            button.classList.toggle('active', mode === '3D');
+            button.setAttribute('aria-pressed', mode === '3D' ? 'true' : 'false');
+            button.title = mode === '3D'
+                ? '3D mode: left-click selects/edits; middle-drag orbits; right-drag pans; wheel zooms.'
+                : 'Switch between 2D drafting and 3D modelling/navigation';
+        }
+        updateFillButton();
+    }
+
+    function updateFillButton() {
+        fillButton = global.document.getElementById('cad-st-3d-fill');
+        if (!fillButton) return;
+        fillButton.textContent = solidFillEnabled ? 'FILL ON' : 'FILL OFF';
+        fillButton.classList.toggle('active', mode === '3D' && solidFillEnabled);
+        fillButton.setAttribute('aria-pressed', solidFillEnabled ? 'true' : 'false');
+        fillButton.title = mode === '2D'
+            ? 'Solid colours are always hidden in 2D. This setting controls filled solids when you switch to 3D.'
+            : 'Toggle solid surface colours. Edges remain visible when fill is OFF.';
+    }
+
+    function ensureSolidEdges(object) {
+        if (!object || !object.geometry || !object.children) return null;
+        let edgeLines = object.children.find(child => child.userData && child.userData.isCadSolidEdges);
+        if (!edgeLines) {
+            edgeLines = new THREE.LineSegments(
+                new THREE.EdgesGeometry(object.geometry, 25),
+                new THREE.LineBasicMaterial({ color: 0x243746, depthTest: true })
+            );
+            edgeLines.userData.isCadSolidEdges = true;
+            object.add(edgeLines);
+        }
+        return edgeLines;
+    }
+
+    function applySolidDisplay() {
+        const objects = context().getObjects();
+        objects.forEach(object => {
+            if (!object || !object.userData || object.userData.type !== 'solid') return;
+            ensureSolidEdges(object);
+            // In 2D, retain only the profile/edge display. In 3D, surface fill
+            // is controlled by the adjacent FILL button.
+            if (object.material) {
+                const materials = Array.isArray(object.material) ? object.material : [object.material];
+                materials.forEach(material => { material.visible = mode === '3D' && solidFillEnabled; });
+            }
+            if (object.userData.isCadSolidEdges && object.visible === false) object.visible = true;
+            if (object.children) object.children.forEach(child => {
+                if (child.userData && child.userData.isCadSolidEdges) child.visible = true;
+            });
+        });
+        updateFillButton();
+    }
+
+    function createFillButton() {
+        const viewButton = global.document.getElementById('cad-st-3d-view');
+        if (!viewButton || !viewButton.parentNode) return;
+        let existing = global.document.getElementById('cad-st-3d-fill');
+        if (!existing) {
+            existing = global.document.createElement('button');
+            existing.type = 'button';
+            existing.id = 'cad-st-3d-fill';
+            existing.style.cssText = viewButton.style.cssText;
+            existing.className = viewButton.className;
+            existing.addEventListener('mousedown', event => event.preventDefault());
+            existing.addEventListener('click', event => {
+                event.stopPropagation();
+                solidFillEnabled = !solidFillEnabled;
+                applySolidDisplay();
+                if (global.SafarEdgeProjectFiles) global.SafarEdgeProjectFiles.markDirty();
+            });
+            viewButton.insertAdjacentElement('afterend', existing);
+        }
+        fillButton = existing;
+        updateFillButton();
     }
 
     function addLighting() {
@@ -188,7 +259,7 @@
             cam.up.set(0, 0, 1);
             setViewVisible(true);
             fitModel();
-            context().setPrompt('3D MODE — Left-drag: orbit | Middle/right-drag: pan | Wheel: zoom | View Navigation: standard views. Type EXTRUDE to create solids from selected closed profiles.');
+            context().setPrompt('3D MODE — Left-click: select/edit | Middle-drag: orbit | Right-drag: pan | Wheel: zoom | Type EXTRUDE for solids.');
         } else {
             mode = '2D';
             setViewVisible(false);
@@ -211,6 +282,7 @@
             }
             context().setPrompt('2D MODE — Existing CAD drafting commands and snapping are active.');
         }
+        applySolidDisplay();
         updateButton();
         if (global.SafarEdgeProjectFiles) global.SafarEdgeProjectFiles.markDirty();
         return mode;
@@ -218,11 +290,20 @@
 
     function onDown(event) {
         if (mode !== '3D' || event.target.closest('#safar-3d-navigation')) return;
-        event.preventDefault(); event.stopImmediatePropagation();
+        // Preserve the CAD engine's left-button selection, direct manipulation
+        // and command-point handling. Navigation uses middle/right drag only.
+        if (event.button !== 1 && event.button !== 2) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
         const cam = camera();
-        drag = { x: event.clientX, y: event.clientY, button: event.button, moved: false, start: cam.position.clone(), quat: cam.quaternion.clone() };
-        if (event.button === 0) drag.kind = 'orbit';
-        else drag.kind = 'pan';
+        drag = {
+            x: event.clientX,
+            y: event.clientY,
+            button: event.button,
+            moved: false,
+            kind: event.button === 1 ? 'orbit' : 'pan'
+        };
+        if (cam) drag.start = cam.position.clone();
     }
 
     function onMove(event) {
@@ -263,10 +344,9 @@
 
     function onUp(event) {
         if (mode !== '3D' || !drag) return;
-        event.preventDefault(); event.stopImmediatePropagation();
-        const wasClick = !drag.moved && drag.kind === 'orbit';
+        event.preventDefault();
+        event.stopImmediatePropagation();
         drag = null;
-        if (wasClick) pick3DObject(event);
     }
 
     function pick3DObject(event) {
@@ -308,7 +388,6 @@
         const el = r.domElement;
         el.dataset.safar3dBound = '1';
         el.addEventListener('mousedown', onDown, true);
-        el.addEventListener('click', onClickCapture, true);
         global.addEventListener('mousemove', onMove, true);
         global.addEventListener('mouseup', onUp, true);
         el.addEventListener('wheel', onWheel, { capture: true, passive: false });
@@ -367,16 +446,23 @@
             geometry.computeVertexNormals();
             geometry.computeBoundingBox();
             const material = new THREE.MeshStandardMaterial({ color: 0x8aa7bd, metalness: 0.18, roughness: 0.52, side: THREE.DoubleSide });
+            // Surface fill is shown only in 3D and only when FILL is enabled.
+            material.visible = mode === '3D' && solidFillEnabled;
             const solid = new THREE.Mesh(geometry, material);
             solid.castShadow = true;
             solid.receiveShadow = true;
+            const edgeGeometry = new THREE.EdgesGeometry(geometry, 25);
+            const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x243746, depthTest: true, transparent: false });
+            const edgeLines = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+            edgeLines.userData.isCadSolidEdges = true;
+            solid.add(edgeLines);
             const factor = result.area / Math.max(result.length * result.width, 1e-12);
             solid.userData = {
                 type: 'solid', closed: true, is3D: true,
                 layer: (profile.userData && profile.userData.layer) || '0',
                 height: height, baseArea: result.area, baseAreaFactor: factor,
                 profileType: (profile.userData && profile.userData.type) || 'polyline',
-                originalColor: 0x8aa7bd, colorMode: 'ByLayer'
+                originalColor: 0x8aa7bd, colorMode: 'ByLayer', isCadSolidEdges: true
             };
             created.push({ profile, solid });
         });
@@ -388,6 +474,7 @@
         ctx.recordReplace(created.map(x => x.profile), created.map(x => x.solid));
         ctx.clearSelection();
         ctx.setSelection(created.map(x => x.solid));
+        applySolidDisplay();
         if (global.SafarEdgeMeasurements) global.SafarEdgeMeasurements.syncFromMenu({ source: 'manual' });
         ctx.setPrompt(`EXTRUDE — Created ${created.length} 3D solid(s), height ${height} mm. Switch to 3D to inspect.`);
         return true;
@@ -417,8 +504,95 @@
         });
     }
 
+    function setSelectedSolidHeight(height) {
+        const ctx = context();
+        const solids = ctx.getSelectedObjects().filter(object =>
+            object && object.userData && object.userData.type === 'solid' && object.geometry
+        );
+        if (!solids.length) {
+            ctx.setPrompt('SOLIDHEIGHT — Select one or more extruded solids first.');
+            return false;
+        }
+        if (!Number.isFinite(height) || height <= 0) {
+            ctx.setPrompt('SOLIDHEIGHT — Height must be a positive number in millimetres.');
+            return false;
+        }
+
+        const before = ctx.captureObjects(solids);
+        let changed = 0;
+        solids.forEach(solid => {
+            const geometry = solid.geometry;
+            const position = geometry && geometry.getAttribute('position');
+            if (!position) return;
+            geometry.computeBoundingBox();
+            const box = geometry.boundingBox;
+            const oldHeight = Number(solid.userData.height) || (box.max.z - box.min.z);
+            if (!Number.isFinite(oldHeight) || oldHeight <= 1e-9) return;
+            const baseZ = box.min.z;
+            const oldTopZ = baseZ + oldHeight;
+            const tolerance = Math.max(1e-7, oldHeight * 1e-7);
+            for (let i = 0; i < position.count; i++) {
+                const z = position.getZ(i);
+                if (Math.abs(z - oldTopZ) <= tolerance) {
+                    position.setZ(i, baseZ + height);
+                }
+            }
+            position.needsUpdate = true;
+            geometry.computeVertexNormals();
+            geometry.computeBoundingBox();
+            geometry.computeBoundingSphere();
+            solid.userData.height = height;
+            // Rebuild the edge overlay to match the resized solid.
+            const oldEdges = solid.children.find(child => child.userData && child.userData.isCadSolidEdges);
+            if (oldEdges) {
+                if (oldEdges.geometry) oldEdges.geometry.dispose();
+                oldEdges.geometry = new THREE.EdgesGeometry(geometry, 25);
+            }
+            changed++;
+        });
+        if (!changed) {
+            ctx.setPrompt('SOLIDHEIGHT — No editable extruded solids were found.');
+            return false;
+        }
+        ctx.recordModify(solids, before);
+        applySolidDisplay();
+        if (global.SafarEdgeMeasurements) global.SafarEdgeMeasurements.syncFromMenu({ source: 'manual' });
+        ctx.setPrompt(`SOLIDHEIGHT — Updated ${changed} solid(s) to ${height} mm.`);
+        return true;
+    }
+
+    function beginSolidHeight(ctx) {
+        const solids = ctx.getSelectedObjects().filter(object =>
+            object && object.userData && object.userData.type === 'solid'
+        );
+        if (!solids.length) {
+            ctx.setPrompt('SOLIDHEIGHT — Select one or more extruded solids first.');
+            return;
+        }
+        ctx.setPrompt('SOLIDHEIGHT — Enter the new height in millimetres:');
+        ctx.setPendingCommand({
+            name: 'SOLIDHEIGHT',
+            prompt: 'SOLIDHEIGHT — Enter the new height in millimetres:',
+            onText: (upper, raw) => {
+                const height = Number(raw);
+                if (!Number.isFinite(height) || height <= 0) {
+                    ctx.setPrompt('SOLIDHEIGHT — Enter a positive height in millimetres:');
+                    return true;
+                }
+                setSelectedSolidHeight(height);
+                ctx.setPendingCommand(null);
+                return true;
+            },
+            onEnter: () => {
+                ctx.setPendingCommand(null);
+                ctx.setPrompt('SOLIDHEIGHT cancelled.');
+            }
+        });
+    }
+
     function getNavigationState() {
         return {
+            solidFillEnabled: solidFillEnabled,
             target: target.toArray(),
             saved2DView: saved2DView ? {
                 position: saved2DView.position.toArray(),
@@ -434,6 +608,7 @@
 
     function restoreNavigationState(state) {
         if (!state || typeof state !== 'object') return;
+        if (typeof state.solidFillEnabled === 'boolean') solidFillEnabled = state.solidFillEnabled;
         if (Array.isArray(state.target) && state.target.length === 3) target.fromArray(state.target);
         const saved = state.saved2DView;
         if (saved && Array.isArray(saved.position) && Array.isArray(saved.quaternion) && Array.isArray(saved.up)) {
@@ -458,15 +633,21 @@
             const cam = camera();
             if (cam) cam.up.set(0, 0, 1);
         }
+        applySolidDisplay();
     }
 
     function initialize() {
         bindNavigation();
+        createFillButton();
+        applySolidDisplay();
         updateButton();
     }
 
     if (typeof CAD.registerCommand === 'function' && !CAD.getCommand('EXTRUDE')) {
         CAD.registerCommand({ name: 'EXTRUDE', aliases: ['EXTD'], desc: 'Create a 3D solid by extruding selected closed profiles', category: '3d', execute: beginExtrude });
+    }
+    if (typeof CAD.registerCommand === 'function' && !CAD.getCommand('SOLIDHEIGHT')) {
+        CAD.registerCommand({ name: 'SOLIDHEIGHT', aliases: ['SHEIGHT'], desc: 'Edit the height of selected extruded solids', category: '3d', execute: beginSolidHeight });
     }
 
     global.SafarEdge3D = {
@@ -478,7 +659,10 @@
         initialize,
         fitModel,
         setStandardView,
-        extrudeSelected
+        extrudeSelected,
+        setSelectedSolidHeight,
+        setSolidFillEnabled: enabled => { solidFillEnabled = !!enabled; applySolidDisplay(); },
+        isSolidFillEnabled: () => solidFillEnabled
     };
 
     // CAD canvas is initialized by the workspace after this script loads.

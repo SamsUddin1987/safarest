@@ -888,7 +888,14 @@ function createCADCommandContext() {
             (objects || []).forEach(object => {
                 if (drawnObjects.includes(object) && !selectedObjects.includes(object)) {
                     selectedObjects.push(object);
-                    if (object.material && object.material.color) object.material.color.setHex(0x00ffff);
+                    // Use the same recursive visual-state handling as ordinary
+                    // canvas selection so Mesh solids and their edge children
+                    // retain their original colours when deselected.
+                    if (typeof setCadObjectSelectedState === 'function') {
+                        setCadObjectSelectedState(object, true);
+                    } else if (object.material && object.material.color) {
+                        object.material.color.setHex(0x00ffff);
+                    }
                 }
             });
             updateSelectionGrips();

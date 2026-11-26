@@ -1,0 +1,33 @@
+SAFAR EDGE — 3D EDITING AND SOLID FILL FIX
+
+Baseline: mysite(20261126-064743).zip
+Integrated: previous 3D visibility/navigation fit and slow-orbit correction.
+
+Changed files:
+1. home/static/js/cad/interaction/cad-3d-modeling.js
+2. home/static/js/cad/core/cad-core.js
+3. home/templates/cad_workspace.html
+
+Changes:
+- Left mouse input is no longer captured by 3D navigation. CAD selection,
+  direct manipulation and command-point input remain available in 3D mode.
+- Middle-button drag orbits; right-button drag pans; wheel zooms.
+- Removed the 3D click-capture blocker that previously stopped CAD clicks.
+- Added FILL ON/OFF button immediately after the 2D / 3D button.
+- Solid surface fill is always hidden in 2D. The solid's edge outline remains
+  visible, including for older saved solids without an edge child.
+- In 3D, solid surface colour can be toggled with FILL ON/OFF.
+- Fill preference is stored in 3D navigation project state.
+- Added SOLIDHEIGHT (alias SHEIGHT) to edit selected extrusion height in mm.
+- Fixed context.setSelection to use recursive CAD visual-state handling so
+  mesh solids and edge children restore their original colours on deselection.
+- Existing MOVE, COPY, ROTATE, SCALE and ERASE command modules are unchanged.
+- Existing MROUND/measurement module is unchanged; its volume takeoff remains
+  responsible for recording solid height and volume.
+
+Validation:
+- node --check passed for both modified JavaScript files.
+- Static checks passed for left-click pass-through, fill toggle, 2D fill-off,
+  edge outlines, persisted fill setting and SOLIDHEIGHT registration.
+- ZIP integrity check performed after packaging.
+- No live browser interaction test performed.
