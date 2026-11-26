@@ -146,6 +146,13 @@
         border-top: 2px solid #2563eb;
     }
 
+
+    .app-tab:disabled {
+        opacity: .55;
+        cursor: not-allowed;
+        pointer-events: none;
+    }
+
     /* CAD MENU BAR */
     .cad-menubar {
         position: absolute;
@@ -279,6 +286,75 @@
     /* Hide the old file input toolbar */
     .cad-file-tools {
         display: none;
+    }
+
+
+    /* Side-by-side CAD / spreadsheet workspace */
+    .app-content-area.split-view-active {
+        display: flex;
+        flex-direction: row;
+        align-items: stretch;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    .app-content-area.split-view-active .app-pane.split-view-pane {
+        display: block !important;
+        position: relative !important;
+        top: auto !important;
+        left: auto !important;
+        width: auto !important;
+        height: 100% !important;
+        min-width: 180px;
+        min-height: 0;
+        flex-grow: 0;
+        flex-shrink: 0;
+        overflow: hidden;
+    }
+
+    .app-content-area.split-view-active #cad-pane,
+    .app-content-area.split-view-active #spreadsheet-pane {
+        flex-basis: calc((100% - 7px) * .5);
+    }
+
+    .workspace-split-divider {
+        position: relative;
+        z-index: 3000;
+        flex: 0 0 7px;
+        width: 7px;
+        height: 100%;
+        cursor: col-resize;
+        background: #343a40;
+        border-left: 1px solid #555;
+        border-right: 1px solid #555;
+        touch-action: none;
+        user-select: none;
+    }
+
+    .workspace-split-divider::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 2px;
+        width: 3px;
+        height: 42px;
+        transform: translateY(-50%);
+        border-radius: 3px;
+        background: #a1a1aa;
+    }
+
+    .workspace-split-divider:hover,
+    .workspace-split-divider.dragging {
+        background: #0e7490;
+    }
+
+    .workspace-split-divider[hidden] { display: none !important; }
+    .workspace-split-resizing { cursor: col-resize !important; user-select: none !important; }
+    #cad-st-split-view.active {
+        color: #fff !important;
+        background: #0e7490 !important;
+        border-color: #22d3ee !important;
     }
 
     /* Responsive menu */
@@ -756,9 +832,10 @@
 <script src="{% static 'js/cad/io/cad-import.js' %}?v=20261123-5"></script>
 
 <!-- NATIVE PROJECT FILE SYSTEM -->
-<script src="{% static 'js/cad/io/cad-project-files.js' %}?v=20261125-measure-1"></script>
+<script src="{% static 'js/cad/io/cad-project-files.js' %}?v=20261126-workspace-2"></script>
 <!-- CAD CLOSED-POLYLINE MEASUREMENT TAKEOFF -->
 <script src="{% static 'js/cad/io/cad-measurement-takeoff.js' %}?v=20261125-measure-units-factor-2"></script>
+<script src="{% static 'js/cad/interaction/cad-split-view.js' %}?v=20261126-split-3"></script>
 
 <script>
 // ============================================
@@ -844,7 +921,8 @@ window.safarRecordCadMeasurements = function () {
 
         // Unsupported or irregular entities are intentionally ignored without an alert.
         // Show the worksheet only when there are measurement rows to review.
-        if (result.rowCount > 0 && typeof window.switchAppTab === 'function') {
+        if (result.rowCount > 0 && typeof window.switchAppTab === 'function' &&
+            !(window.SafarEdgeSplitView && window.SafarEdgeSplitView.isEnabled())) {
             window.switchAppTab('spreadsheet');
         }
         return result;
@@ -976,6 +1054,12 @@ document.addEventListener("DOMContentLoaded", function() {
 });
 
 function switchAppTab(tab) {
+
+    // Both workspaces are already visible in split mode. Ignore tab changes
+    // until the user switches split mode off.
+    if (window.SafarEdgeSplitView && window.SafarEdgeSplitView.isEnabled()) {
+        return;
+    }
 
     const cadStatusBar = document.getElementById('cad-status-bar');
 

@@ -14,6 +14,14 @@
 
     let currentFileHandle = null;
     let currentFileName = '';
+    let currentProjectId = null;
+
+    function createProjectId() {
+        if (global.crypto && typeof global.crypto.randomUUID === 'function') {
+            return global.crypto.randomUUID();
+        }
+        return 'safar-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    }
     let isDirty = false;
     let openInput = null;
 
@@ -72,6 +80,7 @@
     }
 
     function buildProjectData() {
+        if (!currentProjectId) currentProjectId = createProjectId();
         const context = getContext();
         const state = context.getState();
         const objects = context.getObjects();
@@ -93,9 +102,14 @@
             formatVersion: FORMAT_VERSION,
 
             project: {
+                id: currentProjectId,
                 name: currentFileName.replace(/\.est$/i, '') || 'Untitled',
                 createdAt: new Date().toISOString(),
-                modifiedAt: new Date().toISOString()
+                modifiedAt: new Date().toISOString(),
+                workspace: global.SafarEdgeSplitView &&
+                    typeof global.SafarEdgeSplitView.getProjectSettings === 'function'
+                    ? global.SafarEdgeSplitView.getProjectSettings()
+                    : { splitViewEnabled: false, splitRatio: 0.5 }
             },
 
             drawing: {
@@ -239,6 +253,9 @@
 
     function loadProjectData(data) {
         validateProject(data);
+        currentProjectId = data.project && data.project.id
+            ? String(data.project.id)
+            : createProjectId();
         isRestoringProject = true;
 
         try {
@@ -321,6 +338,12 @@
         // Restore the complete Spreadsheet workbook.
         restoreSpreadsheet(data.spreadsheet.sheets);
 
+        // Restore the CAD / Spreadsheet split layout saved in this .est file.
+        if (global.SafarEdgeSplitView &&
+            typeof global.SafarEdgeSplitView.restoreProjectSettings === 'function') {
+            global.SafarEdgeSplitView.restoreProjectSettings(data.project.workspace);
+        }
+
         isDirty = false;
         lastAutoSavedVersion = dirtyVersion;
         } finally {
@@ -387,6 +410,14 @@
             const data = buildProjectData();
             await writeToHandle(currentFileHandle, data);
             await persistFileHandle(currentFileHandle);
+            if (global.SafarEdgeSplitView &&
+                typeof global.SafarEdgeSplitView.restoreForProject === 'function') {
+                global.SafarEdgeSplitView.restoreForProject(
+                    currentFileName,
+                    snapshot.data.project && snapshot.data.project.workspace,
+                    currentProjectId
+                );
+            }
             await persistActiveProjectMetadata(currentFileName);
             isDirty = false;
             lastAutoSavedVersion = dirtyVersion;
@@ -500,6 +531,14 @@
 
         currentFileHandle = handle;
         currentFileName = file.name || handle?.name || 'Untitled.est';
+        if (global.SafarEdgeSplitView &&
+            typeof global.SafarEdgeSplitView.restoreForProject === 'function') {
+            global.SafarEdgeSplitView.restoreForProject(
+                currentFileName,
+                data.project && data.project.workspace,
+                currentProjectId
+            );
+        }
         // Keep the actual FileSystemFileHandle in IndexedDB so Save and
         // AutoSave can continue targeting this same .est file after refresh.
         if (handle) await persistFileHandle(handle);
@@ -673,6 +712,11 @@
 
         currentFileHandle = null;
         currentFileName = '';
+        currentProjectId = null;
+        if (global.SafarEdgeSplitView &&
+            typeof global.SafarEdgeSplitView.restoreProjectSettings === 'function') {
+            global.SafarEdgeSplitView.restoreProjectSettings({ splitViewEnabled: false, splitRatio: 0.5 });
+        }
         isDirty = false;
         lastAutoSavedVersion = dirtyVersion;
         deletePersistedFileHandle();
@@ -1086,6 +1130,10 @@
 
         getCurrentFileName: function () {
             return currentFileName;
+        },
+
+        getCurrentProjectId: function () {
+            return currentProjectId;
         },
 
         isDirty: function () {

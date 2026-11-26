@@ -1,0 +1,32 @@
+SAFAR EDGE — SPLIT VIEW CAD VIEWPORT FIX
+
+Baseline: mysite(20261126-042040).zip
+
+Changed files:
+- home/static/js/cad/interaction/cad-split-view.js
+- home/templates/cad_workspace.html
+
+Fix:
+- Split mode no longer dispatches a synthetic window resize event. The CAD
+  engine's existing resize handler was being triggered on divider movement and
+  recalculating the camera/frustum, which could change the drawing's screen
+  position and scale.
+- The CAD canvas keeps the same full workspace pixel width it had in normal
+  single-pane mode. The CAD pane clips the hidden left/right portions evenly.
+  This preserves the drawing scale, camera, origin and pointer coordinate
+  mapping. It does not re-render CAD at a narrower size when the divider moves.
+- Only the spreadsheet is explicitly resized while adjusting the divider.
+- Turning Split off restores the original canvas container width and left
+  positioning. CAD command/drawing event handlers are not changed.
+
+Install:
+1. Back up your current project.
+2. Extract this ZIP into your Django project root, preserving folders.
+3. Overwrite the two listed files.
+4. Hard-refresh using Ctrl+Shift+R.
+
+Validation:
+- JavaScript syntax check passed.
+- Static checks confirm the split module does not call renderer.setSize and
+  does not dispatch synthetic window resize events.
+- Browser interaction testing has not been performed here.

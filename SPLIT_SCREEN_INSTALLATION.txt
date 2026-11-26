@@ -1,0 +1,30 @@
+SAFAR EDGE — CAD / SPREADSHEET SPLIT VIEW
+==========================================
+
+Baseline:
+  mysite(20261126-032524).zip
+
+Changed files:
+  home/templates/cad_workspace.html
+  home/static/js/cad/interaction/cad-snapping.js
+  home/static/js/cad/interaction/cad-split-view.js  (new)
+
+Installation:
+1. Back up your current project.
+2. Extract this ZIP into your Django project root, preserving folders.
+3. Allow the two existing files to be overwritten and add the new JS file.
+4. Hard-refresh the CAD workspace (Ctrl+Shift+R).
+
+Usage:
+- Click the small split-screen symbol immediately after MEASURE in the bottom status bar.
+- CAD and Spreadsheet will appear together, side by side.
+- Drag the vertical divider left or right to change the space shared by each pane.
+- The selected split ratio is saved in this browser.
+- Click the split symbol again to return to the previously selected single-pane view.
+- Clicking the CAD or Spreadsheet tab also exits split mode and opens that tab.
+- Manual MEASURE updates do not close split mode.
+
+Notes:
+- The CAD and spreadsheet engines remain the existing engines; this change only
+  changes their viewport layout.
+- Browser interaction testing has not been performed in this environment.

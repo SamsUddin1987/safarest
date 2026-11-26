@@ -810,6 +810,14 @@ function setupStatusBar(container) {
     measureButton.title = 'Left-click: update measurement sheet | Right-click: Auto Update settings';
     bar.appendChild(measureButton);
 
+    // Split-view toggle sits immediately beside MEASURE.
+    const splitButton = mk('cad-st-split-view', 'Split ◧', () => {
+        if (window.SafarEdgeSplitView) window.SafarEdgeSplitView.toggle();
+    });
+    splitButton.title = 'Split: show CAD and Spreadsheet side by side';
+    splitButton.setAttribute('aria-label', 'Toggle split screen');
+    bar.appendChild(splitButton);
+
     // IMPORTANT: Append to the existing tab ribbon, after Spreadsheet.
     const tabBar = document.querySelector('.app-tab-bar');
 

@@ -40,6 +40,10 @@
     let hasWarnedAboutSheet = false;
     const AUTO_UPDATE_STORAGE_KEY = 'safaredge.cad.measurements.autoUpdate';
     const OUTPUT_UNIT_STORAGE_KEY = 'safaredge.cad.measurements.outputUnit';
+    const MEASUREMENT_MROUND_KEY = 'safaredge.cad.measurements.measurementMroundMultiple';
+    const QUANTITY_MROUND_KEY = 'safaredge.cad.measurements.quantityMroundMultiple';
+    const LEGACY_MEASUREMENT_DECIMALS_KEY = 'safaredge.cad.measurements.measurementDecimals';
+    const LEGACY_QUANTITY_DECIMALS_KEY = 'safaredge.cad.measurements.quantityDecimals';
     let autoUpdateEnabled = false;
     let settingsMenuEl = null;
     let outsideMenuHandler = null;
@@ -314,6 +318,57 @@
         return true;
     }
 
+    function getMroundMultiple(key, defaultValue, legacyKey, legacyDefaultDecimals) {
+        try {
+            const stored = global.localStorage.getItem(key);
+            if (stored !== null && stored !== '') {
+                const value = Number(stored);
+                if (Number.isFinite(value) && value > 0) return value;
+            }
+
+            // Migrate the previous whole-number decimal-place setting once.
+            const legacy = legacyKey ? global.localStorage.getItem(legacyKey) : null;
+            if (legacy !== null && legacy !== '') {
+                const decimals = Number(legacy);
+                if (Number.isInteger(decimals) && decimals >= 0 && decimals <= 12) {
+                    const migrated = Math.pow(10, -decimals);
+                    global.localStorage.setItem(key, String(migrated));
+                    return migrated;
+                }
+            }
+        } catch (_) {}
+        return defaultValue;
+    }
+
+    function setMroundMultiple(key, value) {
+        const multiple = Number(value);
+        if (!Number.isFinite(multiple) || multiple <= 0) return false;
+        try {
+            global.localStorage.setItem(key, String(multiple));
+        } catch (_) {}
+        return true;
+    }
+
+    function decimalPlacesForMultiple(multiple) {
+        const text = Number(multiple).toString().toLowerCase();
+        if (text.includes('e-')) {
+            const parts = text.split('e-');
+            return Math.min(12, Number(parts[1]) || 0);
+        }
+        const fraction = text.split('.')[1] || '';
+        return Math.min(12, fraction.length);
+    }
+
+    function mround(value, multiple) {
+        if (!Number.isFinite(value) || !Number.isFinite(multiple) || multiple <= 0) {
+            return value;
+        }
+        const units = Math.round(Math.abs(value) / multiple + Number.EPSILON * 4);
+        const decimals = decimalPlacesForMultiple(multiple);
+        const rounded = units * multiple;
+        return Number((Math.sign(value) * rounded).toFixed(decimals));
+    }
+
     function conversionDescription(currentUnit, outputUnit) {
         const outputFactor = UNIT_FACTORS[outputUnit] || 1000;
         // CAD model coordinates are stored in millimetres by cad-core.js.
@@ -329,8 +384,19 @@
         };
     }
 
-    function buildMeasurementRows(objects, precision, currentUnit, outputUnit) {
-        const decimals = Math.max(0, Math.min(6, Number(precision) || 0));
+    function buildMeasurementRows(
+        objects,
+        measurementMultiple,
+        quantityMultiple,
+        currentUnit,
+        outputUnit
+    ) {
+        const measurementStep = Number(measurementMultiple);
+        const quantityStep = Number(quantityMultiple);
+        if (!Number.isFinite(measurementStep) || measurementStep <= 0 ||
+            !Number.isFinite(quantityStep) || quantityStep <= 0) {
+            throw new Error('MROUND multiples must be positive numbers.');
+        }
         const targetUnit = UNIT_FACTORS[outputUnit] ? outputUnit : defaultOutputUnit(currentUnit || 'mm');
         const mmPerOutputUnit = UNIT_FACTORS[targetUnit] || 1000;
         const mmToOutput = 1 / mmPerOutputUnit;
@@ -347,13 +413,13 @@
                     const radiusMm = getCircleRadius(object);
                     if (!Number.isFinite(radiusMm) || radiusMm <= 1e-9) return;
                     // Circle radius is recorded in both Length and Width.
-                    length = Number((radiusMm * mmToOutput).toFixed(decimals));
+                    length = mround(radiusMm * mmToOutput, measurementStep);
                     width = length;
                 } else {
                     const bounds = getBounds(object);
                     if (!bounds || bounds.length <= 1e-9 || bounds.width <= 1e-9) return;
-                    length = Number((bounds.length * mmToOutput).toFixed(decimals));
-                    width = Number((bounds.width * mmToOutput).toFixed(decimals));
+                    length = mround(bounds.length * mmToOutput, measurementStep);
+                    width = mround(bounds.width * mmToOutput, measurementStep);
                 }
 
                 const layer = String(
@@ -362,7 +428,7 @@
                         : '0'
                 );
                 const nosFactor = kind === 'circle' ? 3.142 : 1;
-                const key = [kind, layer, nosFactor, length.toFixed(decimals), width.toFixed(decimals)].join('|');
+                const key = [kind, layer, nosFactor, length, width].join('|');
 
                 if (!groups.has(key)) {
                     groups.set(key, {
@@ -390,7 +456,10 @@
             length: group.length,
             width: group.width,
             height: '',
-            quantity: Number((group.nos * group.nosFactor * group.length * group.width).toFixed(6)),
+            quantity: mround(
+                group.nos * group.nosFactor * group.length * group.width,
+                quantityStep
+            ),
             unit: unit,
             remarks: ''
         }));
@@ -520,7 +589,33 @@
                 item.unit,
                 item.remarks
             ];
-            values.forEach((value, col) => writeCell(order, index + 1, col, value));
+            const sheetRow = index + 1;
+            values.forEach((value, col) => writeCell(order, sheetRow, col, value));
+
+            // Keep spreadsheet cells numeric, but display exactly the selected
+            // decimal precision. Luckysheet's cell format uses ct.fa + ct.t.
+            if (typeof global.luckysheet.setCellFormat === 'function') {
+                const measurementMultiple = getMroundMultiple(MEASUREMENT_MROUND_KEY, 0.001, LEGACY_MEASUREMENT_DECIMALS_KEY, 3);
+                const quantityMultiple = getMroundMultiple(QUANTITY_MROUND_KEY, 0.01, LEGACY_QUANTITY_DECIMALS_KEY, 2);
+                const measurementDecimals = decimalPlacesForMultiple(measurementMultiple);
+                const quantityDecimals = decimalPlacesForMultiple(quantityMultiple);
+                const measurementFormat = {
+                    fa: measurementDecimals === 0 ? '0' : '0.' + '0'.repeat(measurementDecimals),
+                    t: 'n'
+                };
+                const quantityFormat = {
+                    fa: quantityDecimals === 0 ? '0' : '0.' + '0'.repeat(quantityDecimals),
+                    t: 'n'
+                };
+
+                try {
+                    global.luckysheet.setCellFormat(sheetRow, 4, 'ct', measurementFormat, { order: order });
+                    global.luckysheet.setCellFormat(sheetRow, 5, 'ct', measurementFormat, { order: order });
+                    global.luckysheet.setCellFormat(sheetRow, 7, 'ct', quantityFormat, { order: order });
+                } catch (formatError) {
+                    console.warn('SAFAR EDGE could not apply measurement number formatting.', formatError);
+                }
+            }
         });
 
         if (headerChanged || rows.length || existing.maxRow) {
@@ -559,7 +654,13 @@
             const state = context && typeof context.getState === 'function' ? context.getState() : {};
             const currentUnit = getCurrentDrawingUnit(context);
             const outputUnit = getOutputUnit(currentUnit);
-            rows = buildMeasurementRows(objects, state.precision, currentUnit, outputUnit);
+            rows = buildMeasurementRows(
+                objects,
+                getMroundMultiple(MEASUREMENT_MROUND_KEY, 0.001, LEGACY_MEASUREMENT_DECIMALS_KEY, 3),
+                getMroundMultiple(QUANTITY_MROUND_KEY, 0.01, LEGACY_QUANTITY_DECIMALS_KEY, 2),
+                currentUnit,
+                outputUnit
+            );
         } catch (error) {
             return { ok: false, message: 'Unable to read CAD objects: ' + error.message };
         }
@@ -601,21 +702,28 @@
         if (!global.CAD || typeof global.CAD.createContext !== 'function') return false;
         if (!global.luckysheet || typeof global.luckysheet.setCellValue !== 'function') return false;
 
-        const sheets = getWorkbookSheets();
         const sheet = findMeasurementSheet();
         if (!sheet) return false;
 
-        const order = sheetOrder(sheet, sheets);
-        const context = global.CAD.createContext();
-        const state = context.getState();
-        const currentUnit = getCurrentDrawingUnit(context);
-        const outputUnit = getOutputUnit(currentUnit);
-        const rows = buildMeasurementRows(
-            context.getObjects(),
-            state.precision,
-            currentUnit,
-            outputUnit
-        );
+        let rows;
+        try {
+            const context = global.CAD.createContext();
+            const objects = context && typeof context.getObjects === 'function'
+                ? context.getObjects()
+                : [];
+            const currentUnit = getCurrentDrawingUnit(context);
+            const outputUnit = getOutputUnit(currentUnit);
+            rows = buildMeasurementRows(
+                objects,
+                getMroundMultiple(MEASUREMENT_MROUND_KEY, 0.001, LEGACY_MEASUREMENT_DECIMALS_KEY, 3),
+                getMroundMultiple(QUANTITY_MROUND_KEY, 0.01, LEGACY_QUANTITY_DECIMALS_KEY, 2),
+                currentUnit,
+                outputUnit
+            );
+        } catch (error) {
+            console.error('SAFAR EDGE measurement calculation failed:', error);
+            return false;
+        }
 
         isSyncing = true;
         try {
@@ -714,6 +822,69 @@
             if (autoUpdateEnabled) scheduleSync(0);
         });
         menu.appendChild(conversion);
+
+        const roundingMethod = global.document.createElement('div');
+        roundingMethod.style.cssText = 'padding:7px 2px 4px;color:#ccc;';
+        roundingMethod.textContent = 'Rounding Method: MROUND (fixed)';
+        menu.appendChild(roundingMethod);
+
+        // User-defined MROUND multiple for measurements.
+        const measurementPrecisionLabel = global.document.createElement('label');
+        measurementPrecisionLabel.style.cssText =
+            'display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 2px;color:#eee;';
+
+        const measurementPrecisionText = global.document.createElement('span');
+        measurementPrecisionText.textContent = 'Measurement MROUND Multiple';
+
+        const measurementPrecisionInput = global.document.createElement('input');
+        measurementPrecisionInput.type = 'number';
+        measurementPrecisionInput.min = '0';
+        measurementPrecisionInput.step = 'any';
+        measurementPrecisionInput.value = getMroundMultiple(MEASUREMENT_MROUND_KEY, 0.001, LEGACY_MEASUREMENT_DECIMALS_KEY, 3);
+        measurementPrecisionInput.style.cssText =
+            'width:90px;padding:4px;background:#333;color:#fff;border:1px solid #666;border-radius:3px;';
+
+        measurementPrecisionInput.addEventListener('change', () => {
+            const value = Number(measurementPrecisionInput.value);
+            if (!setMroundMultiple(MEASUREMENT_MROUND_KEY, value)) {
+                measurementPrecisionInput.value = getMroundMultiple(MEASUREMENT_MROUND_KEY, 0.001, LEGACY_MEASUREMENT_DECIMALS_KEY, 3);
+                return;
+            }
+            if (autoUpdateEnabled) scheduleSync(0);
+        });
+
+        measurementPrecisionLabel.appendChild(measurementPrecisionText);
+        measurementPrecisionLabel.appendChild(measurementPrecisionInput);
+        menu.appendChild(measurementPrecisionLabel);
+
+        // User-defined MROUND multiple for quantities.
+        const quantityPrecisionLabel = global.document.createElement('label');
+        quantityPrecisionLabel.style.cssText =
+            'display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 2px;color:#eee;';
+
+        const quantityPrecisionText = global.document.createElement('span');
+        quantityPrecisionText.textContent = 'Quantity MROUND Multiple';
+
+        const quantityPrecisionInput = global.document.createElement('input');
+        quantityPrecisionInput.type = 'number';
+        quantityPrecisionInput.min = '0';
+        quantityPrecisionInput.step = 'any';
+        quantityPrecisionInput.value = getMroundMultiple(QUANTITY_MROUND_KEY, 0.01, LEGACY_QUANTITY_DECIMALS_KEY, 2);
+        quantityPrecisionInput.style.cssText =
+            'width:90px;padding:4px;background:#333;color:#fff;border:1px solid #666;border-radius:3px;';
+
+        quantityPrecisionInput.addEventListener('change', () => {
+            const value = Number(quantityPrecisionInput.value);
+            if (!setMroundMultiple(QUANTITY_MROUND_KEY, value)) {
+                quantityPrecisionInput.value = getMroundMultiple(QUANTITY_MROUND_KEY, 0.01, LEGACY_QUANTITY_DECIMALS_KEY, 2);
+                return;
+            }
+            if (autoUpdateEnabled) scheduleSync(0);
+        });
+
+        quantityPrecisionLabel.appendChild(quantityPrecisionText);
+        quantityPrecisionLabel.appendChild(quantityPrecisionInput);
+        menu.appendChild(quantityPrecisionLabel);
 
         const label = global.document.createElement('label');
         label.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 2px;';
@@ -821,6 +992,9 @@
         getCurrentDrawingUnit: getCurrentDrawingUnit,
         getOutputUnit: getOutputUnit,
         setOutputUnit: setOutputUnit,
-        conversionDescription: conversionDescription
+        conversionDescription: conversionDescription,
+        mround: mround,
+        getMroundMultiple: getMroundMultiple,
+        setMroundMultiple: setMroundMultiple
     };
 })(window);
