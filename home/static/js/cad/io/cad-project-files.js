@@ -118,6 +118,10 @@
                 limits: state.limits,
                 dimensionSettings: global.CAD.Dimension.getSettings(),
                 camera: getCameraData(),
+                viewMode: global.SafarEdge3D && typeof global.SafarEdge3D.getMode === 'function'
+                    ? global.SafarEdge3D.getMode() : '2D',
+                navigation3D: global.SafarEdge3D && typeof global.SafarEdge3D.getNavigationState === 'function'
+                    ? global.SafarEdge3D.getNavigationState() : null,
                 entities: entities
             },
 
@@ -327,8 +331,14 @@
 
         global.CAD.Dimension.applyLayerStates();
 
-        // Restore the saved viewport.
+        // Restore the saved viewport and its 2D / 3D navigation mode.
         restoreCamera(data.drawing.camera);
+        if (global.SafarEdge3D && typeof global.SafarEdge3D.restoreNavigationState === 'function') {
+            global.SafarEdge3D.restoreNavigationState(data.drawing.navigation3D || null);
+        }
+        if (global.SafarEdge3D && typeof global.SafarEdge3D.restoreMode === 'function') {
+            global.SafarEdge3D.restoreMode(data.drawing.viewMode || '2D');
+        }
 
         // Opening a project starts with a clean Undo/Redo history.
         context.resetHistory();

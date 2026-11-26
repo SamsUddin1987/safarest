@@ -5,9 +5,9 @@
  * length/width. The measurement table occupies columns A:J:
  * Sl No, Description, Nos, Nos (Factor), Length, Width, Height, Quantity, Unit, Remarks.
  *
- * Length and width are overall plan extents converted from the CAD base unit (mm)
- * to the selected output unit. Height is reserved for future 3D takeoff.
- * Quantity = Nos × Nos (Factor) × Length × Width.
+ * Length, width and height are converted from CAD millimetres to the selected output unit.
+ * 2D quantity = Nos × Factor × Length × Width (area).
+ * 3D quantity = Nos × Factor × Length × Width × Height (volume).
  */
 (function (global) {
     'use strict';
@@ -20,13 +20,8 @@
         'Sl No', 'Description', 'Nos', 'Length', 'Width',
         'Height', 'Quantity', 'Unit', 'Remarks'
     ];
-    const AREA_UNITS = {
-        mm: 'mm²',
-        cm: 'cm²',
-        m: 'm²',
-        inch: 'in²',
-        ft: 'ft²'
-    };
+    const AREA_UNITS = { mm: 'mm²', cm: 'cm²', m: 'm²', inch: 'in²', ft: 'ft²' };
+    const VOLUME_UNITS = { mm: 'mm³', cm: 'cm³', m: 'm³', inch: 'in³', ft: 'ft³' };
     const UNIT_FACTORS = {
         mm: 1,
         cm: 10,
@@ -151,6 +146,7 @@
         const data = object.userData || {};
         const type = String(data.type || '').toLowerCase();
 
+        if (type === 'solid' || data.is3D === true) return 'solid';
         if (type === 'circle') return 'circle';
         if (['rect', 'rectangle', 'square'].includes(type)) return 'rectangle';
 
@@ -232,10 +228,8 @@
             object.updateMatrixWorld(true);
         }
 
-        let minX = Infinity;
-        let minY = Infinity;
-        let maxX = -Infinity;
-        let maxY = -Infinity;
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
 
         const vector = global.THREE && global.THREE.Vector3
             ? new global.THREE.Vector3()
@@ -263,12 +257,15 @@
                 object.localToWorld(vector);
                 x = vector.x;
                 y = vector.y;
+                z = vector.z;
             }
 
             minX = Math.min(minX, x);
             minY = Math.min(minY, y);
             maxX = Math.max(maxX, x);
             maxY = Math.max(maxY, y);
+            minZ = Math.min(minZ, z);
+            maxZ = Math.max(maxZ, z);
         }
 
         if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null;
@@ -277,7 +274,8 @@
         const dy = Math.max(0, maxY - minY);
         return {
             length: Math.max(dx, dy),
-            width: Math.min(dx, dy)
+            width: Math.min(dx, dy),
+            height: Math.max(0, maxZ - minZ)
         };
     }
 
@@ -374,27 +372,23 @@
         // CAD model coordinates are stored in millimetres by cad-core.js.
         const linear = 1 / outputFactor;
         const area = linear * linear;
+        const volume = area * linear;
         const sourceLabel = 'mm';
         const lengthLabel = outputUnit;
         const areaLabel = AREA_UNITS[outputUnit] || 'm²';
+        const volumeLabel = VOLUME_UNITS[outputUnit] || 'm³';
         return {
             linear: `1 ${sourceLabel} = ${Number(linear.toPrecision(8))} ${lengthLabel}`,
             area: `1 mm² = ${Number(area.toPrecision(8))} ${areaLabel}`,
+            volume: `1 mm³ = ${Number(volume.toPrecision(8))} ${volumeLabel}`,
             note: `Drawing unit setting: ${currentUnit}. CAD geometry is stored in mm; measurements are converted from mm to ${outputUnit}.`
         };
     }
 
-    function buildMeasurementRows(
-        objects,
-        measurementMultiple,
-        quantityMultiple,
-        currentUnit,
-        outputUnit
-    ) {
+    function buildMeasurementRows(objects, measurementMultiple, quantityMultiple, currentUnit, outputUnit) {
         const measurementStep = Number(measurementMultiple);
         const quantityStep = Number(quantityMultiple);
-        if (!Number.isFinite(measurementStep) || measurementStep <= 0 ||
-            !Number.isFinite(quantityStep) || quantityStep <= 0) {
+        if (!Number.isFinite(measurementStep) || measurementStep <= 0 || !Number.isFinite(quantityStep) || quantityStep <= 0) {
             throw new Error('MROUND multiples must be positive numbers.');
         }
         const targetUnit = UNIT_FACTORS[outputUnit] ? outputUnit : defaultOutputUnit(currentUnit || 'mm');
@@ -406,63 +400,58 @@
             try {
                 const kind = getEntityKind(object);
                 if (!kind) return;
+                const bounds = getBounds(object);
+                if (!bounds || bounds.length <= 1e-9 || bounds.width <= 1e-9) return;
 
-                let length;
-                let width;
+                let length, width, height = 0, nosFactor = 1;
                 if (kind === 'circle') {
                     const radiusMm = getCircleRadius(object);
                     if (!Number.isFinite(radiusMm) || radiusMm <= 1e-9) return;
-                    // Circle radius is recorded in both Length and Width.
                     length = mround(radiusMm * mmToOutput, measurementStep);
                     width = length;
+                    nosFactor = 3.142;
                 } else {
-                    const bounds = getBounds(object);
-                    if (!bounds || bounds.length <= 1e-9 || bounds.width <= 1e-9) return;
                     length = mround(bounds.length * mmToOutput, measurementStep);
                     width = mround(bounds.width * mmToOutput, measurementStep);
                 }
 
-                const layer = String(
-                    object.userData && object.userData.layer
-                        ? object.userData.layer
-                        : '0'
-                );
-                const nosFactor = kind === 'circle' ? 3.142 : 1;
-                const key = [kind, layer, nosFactor, length, width].join('|');
-
-                if (!groups.has(key)) {
-                    groups.set(key, {
-                        kind: kind,
-                        description: layer,
-                        nos: 0,
-                        nosFactor: nosFactor,
-                        length: length,
-                        width: width
-                    });
+                const isSolid = kind === 'solid';
+                if (isSolid) {
+                    const rawHeight = Number((object.userData || {}).height) || bounds.height;
+                    if (!Number.isFinite(rawHeight) || rawHeight <= 1e-9) return;
+                    height = mround(rawHeight * mmToOutput, measurementStep);
+                    nosFactor = Number((object.userData || {}).baseAreaFactor) || 1;
                 }
+
+                const layer = String(object.userData && object.userData.layer ? object.userData.layer : '0');
+                const key = [kind, layer, nosFactor, length, width, height].join('|');
+                if (!groups.has(key)) groups.set(key, {
+                    kind, description: layer, nos: 0, nosFactor, length, width, height
+                });
                 groups.get(key).nos += 1;
             } catch (error) {
-                // Ignore unsupported or malformed entities; they are not takeoff shapes.
                 console.debug('SAFAR EDGE measurement skipped an unsupported entity.', error);
             }
         });
 
-        const unit = AREA_UNITS[targetUnit] || 'm²';
-        return Array.from(groups.values()).map((group, index) => ({
-            slNo: index + 1,
-            description: group.description,
-            nos: group.nos,
-            nosFactor: group.nosFactor,
-            length: group.length,
-            width: group.width,
-            height: '',
-            quantity: mround(
-                group.nos * group.nosFactor * group.length * group.width,
-                quantityStep
-            ),
-            unit: unit,
-            remarks: ''
-        }));
+        return Array.from(groups.values()).map((group, index) => {
+            const isSolid = group.kind === 'solid';
+            return {
+                slNo: index + 1,
+                description: group.description,
+                nos: group.nos,
+                nosFactor: group.nosFactor,
+                length: group.length,
+                width: group.width,
+                height: isSolid ? group.height : '',
+                quantity: mround(
+                    group.nos * group.nosFactor * group.length * group.width * (isSolid ? group.height : 1),
+                    quantityStep
+                ),
+                unit: isSolid ? (VOLUME_UNITS[targetUnit] || 'm³') : (AREA_UNITS[targetUnit] || 'm²'),
+                remarks: ''
+            };
+        });
     }
 
     function readExistingRows(sheet) {
@@ -584,7 +573,7 @@
                 item.nosFactor,
                 item.length,
                 item.width,
-                '', // Height intentionally reserved for future 3D use.
+                item.height,
                 item.quantity,
                 item.unit,
                 item.remarks
@@ -611,6 +600,7 @@
                 try {
                     global.luckysheet.setCellFormat(sheetRow, 4, 'ct', measurementFormat, { order: order });
                     global.luckysheet.setCellFormat(sheetRow, 5, 'ct', measurementFormat, { order: order });
+                    if (item.height !== '') global.luckysheet.setCellFormat(sheetRow, 6, 'ct', measurementFormat, { order: order });
                     global.luckysheet.setCellFormat(sheetRow, 7, 'ct', quantityFormat, { order: order });
                 } catch (formatError) {
                     console.warn('SAFAR EDGE could not apply measurement number formatting.', formatError);
@@ -813,7 +803,7 @@
         conversion.style.cssText = 'color:#9ca3af;font-size:11px;line-height:1.45;padding:5px 2px 7px;border-bottom:1px solid #444;margin-bottom:5px;';
         const updateConversionText = () => {
             const details = conversionDescription(currentUnit, outputSelect.value);
-            conversion.textContent = details.note + ' ' + details.linear + '; ' + details.area;
+            conversion.textContent = details.note + ' ' + details.linear + '; ' + details.area + '; ' + details.volume;
         };
         updateConversionText();
         outputSelect.addEventListener('change', () => {

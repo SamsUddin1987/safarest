@@ -1,0 +1,72 @@
+SAFAR EDGE — BROWSER-SIDE 3D MODELLING FOUNDATION
+=================================================
+
+Baseline used: mysite(20261126-042040).zip
+Measurement baseline merged: safaredge_user_defined_mround_multiples.zip
+
+CHANGED FILES
+-------------
+home/static/js/cad/interaction/cad-3d-modeling.js  (new)
+home/static/js/cad/interaction/cad-snapping.js
+home/static/js/cad/io/cad-measurement-takeoff.js
+home/static/js/cad/io/cad-project-files.js
+home/templates/cad_workspace.html
+
+WHAT THIS IMPLEMENTS
+--------------------
+1. Adds a 2D / 3D status-bar button immediately after Split.
+2. Uses the existing Three.js scene, camera and renderer. No second renderer,
+   server-side geometry engine, Python package or 3D server function is added.
+3. In 3D mode: left-drag orbits, middle/right-drag pans, mouse wheel zooms.
+   The navigation panel provides Top, Front, Back, Left, Right, ISO, Fit and Home.
+4. Adds the EXTRUDE command (alias EXTD). Select a closed rectangle, circle or
+   closed polyline in 2D, type EXTRUDE, enter a positive height in millimetres.
+   The selected profile is replaced by an editable Three.js extruded solid.
+5. Solid metadata is serialized with the existing Three.js Object3D project data.
+   The active 2D / 3D view mode is also saved in the .est project.
+6. Measurement takeoff writes Height to column G. 2D entities continue to produce
+   area quantities (m² etc.). Extruded solids produce volume quantities (m³ etc.)
+   using Nos × profile factor × Length × Width × Height. User-defined MROUND
+   multiples remain in effect for dimensions and quantity.
+
+HOW TO USE
+----------
+A. Draw a closed rectangle, circle or closed polyline in 2D.
+B. Select the profile.
+C. Type EXTRUDE and press Enter.
+D. Enter the required extrusion height in millimetres and press Enter.
+E. Click 2D / 3D to inspect the solid. Use the navigation panel or mouse controls.
+F. Click MEASURE to write the dimensions, Height and volume to the spreadsheet.
+
+NAVIGATION
+----------
+Left mouse drag: orbit
+Middle or right mouse drag: pan
+Mouse wheel: zoom
+View panel: standard views, fit and home
+Click a solid: select it
+
+IMPORTANT SCOPE NOTES
+--------------------
+- This is a browser-side 3D modelling foundation, not yet full parity with
+  AutoCAD, Revit, SolidWorks or other mature parametric/BIM systems.
+- The initial solid creation tool is extrusion of simple, single-loop closed
+  2D profiles. Profiles with holes, self-intersections, non-planar geometry,
+  boolean operations, fillets/chamfers, sweeps, lofts, assemblies, constraints,
+  BIM object libraries and IFC workflows are not implemented in this patch.
+- 3D mode is for navigation, inspection and selection. Existing precision 2D
+  drafting commands remain intended for 2D mode.
+- No browser end-to-end interaction test was available in this build environment.
+  JavaScript syntax and 3D volume takeoff calculations were tested separately.
+- The 3D module does not allocate another WebGL renderer or create a second
+  animation loop; it uses the existing CAD renderer/animation loop. Rendering
+  and extrusion geometry generation occur in the user's browser.
+
+INSTALLATION
+------------
+1. Back up the five existing files listed above (the 3D module is new).
+2. Extract this ZIP into the Django project root, preserving folders.
+3. Overwrite the four existing files and add the new cad-3d-modeling.js file.
+4. Deploy normally and hard-refresh the browser (Ctrl + Shift + R).
+5. Test with a simple rectangle first, then circle and closed polyline.
+6. Save a copy of the .est project before testing on important work.

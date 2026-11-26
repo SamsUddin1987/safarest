@@ -818,6 +818,14 @@ function setupStatusBar(container) {
     splitButton.setAttribute('aria-label', 'Toggle split screen');
     bar.appendChild(splitButton);
 
+    // 2D / 3D mode switch is placed immediately after Split on the same status line.
+    const view3DButton = mk('cad-st-3d-view', '2D / 3D', () => {
+        if (window.SafarEdge3D) window.SafarEdge3D.toggleMode();
+    });
+    view3DButton.title = 'Switch between 2D drafting and 3D modelling/navigation';
+    view3DButton.setAttribute('aria-label', 'Switch 2D / 3D view');
+    bar.appendChild(view3DButton);
+
     // IMPORTANT: Append to the existing tab ribbon, after Spreadsheet.
     const tabBar = document.querySelector('.app-tab-bar');
 

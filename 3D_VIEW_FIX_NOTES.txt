@@ -1,0 +1,14 @@
+SAFAR EDGE 3D VIEW FIX
+Baseline: mysite(20261126-064743).zip
+Changed files:
+- home/static/js/cad/interaction/cad-3d-modeling.js
+- home/templates/cad_workspace.html (cache bust only)
+
+Corrections:
+- Fit view uses camera-space bounding box and orthographic frustum, preventing near-invisible objects.
+- 3D camera far plane extended to avoid clipping large drawings; original 2D near/far restored on exit.
+- Mouse orbit uses incremental delta and slower sensitivity, with Z-up orbit geometry.
+- Wheel zoom sensitivity reduced.
+- Existing 2D, measurement, save and split logic not modified.
+
+Tests: node --check passed; ZIP integrity check passed. Browser not tested.
