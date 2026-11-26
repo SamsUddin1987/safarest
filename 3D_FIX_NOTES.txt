@@ -1,1 +1,0 @@
-Fixes 3D orthographic fit-to-model zoom, camera clipping for large CAD geometry, Z-up incremental orbit and slower mouse wheel zoom. No changes to 2D drawing, split mode or measurement code. Static syntax test passed; browser not tested.

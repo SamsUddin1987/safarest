@@ -396,8 +396,25 @@
         const mmToOutput = 1 / mmPerOutputUnit;
         const groups = new Map();
 
-        (objects || []).forEach(object => {
+        // CAD measurements are entity-based, not edge/vertex-based. A closed
+        // POLYLINE is one entity regardless of how many segments it contains.
+        // Ignore repeated references and separately-listed child primitives
+        // when their owning parent entity is also present in the CAD registry.
+        const sourceObjects = Array.isArray(objects) ? objects : [];
+        const registeredObjects = new Set(sourceObjects.filter(Boolean));
+        const seenObjects = new Set();
+
+        sourceObjects.forEach(object => {
             try {
+                if (!object || seenObjects.has(object)) return;
+                seenObjects.add(object);
+
+                let owner = object.parent;
+                while (owner) {
+                    if (registeredObjects.has(owner)) return;
+                    owner = owner.parent;
+                }
+
                 const kind = getEntityKind(object);
                 if (!kind) return;
                 const bounds = getBounds(object);

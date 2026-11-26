@@ -31,10 +31,32 @@
             return null;
         }
 
+        // Work on a clean copy. A closed polyline is represented by one
+        // THREE.Line entity; its segments are vertices of this entity, not
+        // separate CAD measurement entities.
         const committedPoints = points.map(p => p.clone());
+        const firstPoint = committedPoints[0];
+        const lastPoint = committedPoints[committedPoints.length - 1];
+        const closed = committedPoints.length > 2 &&
+            firstPoint.distanceTo(lastPoint) <= 1e-7;
+
+        // Remove consecutive duplicate vertices. This prevents a repeated
+        // click at the closing point from creating a zero-length final edge.
+        const cleanPoints = [];
+        committedPoints.forEach(point => {
+            if (!cleanPoints.length ||
+                cleanPoints[cleanPoints.length - 1].distanceTo(point) > 1e-7) {
+                cleanPoints.push(point);
+            }
+        });
+        if (closed && cleanPoints.length > 2 &&
+            cleanPoints[0].distanceTo(cleanPoints[cleanPoints.length - 1]) > 1e-7) {
+            cleanPoints.push(cleanPoints[0].clone());
+        }
+        if (cleanPoints.length < 2) return null;
 
         const geometry =
-            new THREE.BufferGeometry().setFromPoints(committedPoints);
+            new THREE.BufferGeometry().setFromPoints(cleanPoints);
 
         const material =
             new THREE.LineBasicMaterial({
@@ -44,15 +66,12 @@
 
         const polyline = new THREE.Line(geometry, material);
 
-        const first = committedPoints[0];
-        const last = committedPoints[committedPoints.length - 1];
-        const closed = committedPoints.length > 2 &&
-            first.distanceTo(last) <= 1e-7;
-
         polyline.userData = {
             type: 'polyline',
-            points: committedPoints,
+            entityKind: 'polyline',
+            points: cleanPoints,
             closed: closed,
+            isClosed: closed,
             originalColor: 0x00ff00
         };
 
@@ -145,16 +164,18 @@
                     state.currentPoints[0].clone()
                 ];
 
-                commit(points, context);
-
-                // Keep POLYLINE active, but clear the committed chain so
-                // onFinish cannot commit the same vertices a second time.
+                // Reset before registering the closed entity so a later
+                // finish callback cannot register this chain again.
                 context.updateState({
                     currentPoints: [],
                     basePoint: null,
                     isDrawing: false,
                     toolStep: 0
                 });
+                commit(points, context);
+
+                // Keep POLYLINE active, but clear the committed chain so
+                // onFinish cannot commit the same vertices a second time.
                 context.clearPreview();
                 context.setPrompt('PLINE — Pick start point:');
 
@@ -214,14 +235,17 @@
 
         if (state.currentPoints.length > 1) {
 
-            commit(state.currentPoints, context);
-
+            // Clear the active chain BEFORE registering the entity. If the
+            // command framework subsequently calls onFinish, it cannot commit
+            // the same polyline a second time.
+            const pointsToCommit = state.currentPoints.slice();
             context.updateState({
                 currentPoints: [],
                 basePoint: null,
                 isDrawing: false,
                 toolStep: 0
             });
+            commit(pointsToCommit, context);
             context.clearPreview();
             context.setPrompt('PLINE — Pick start point:');
 
@@ -248,9 +272,23 @@
     function onFinish(context) {
 
         const state = context.getState();
+        const pointsToCommit = state.isDrawing && state.currentPoints.length > 1
+            ? state.currentPoints.slice()
+            : [];
 
-        if (state.currentPoints.length > 1) {
-            commit(state.currentPoints, context);
+        // Always reset first. Tool finish may be triggered through multiple
+        // command-exit paths; a second invocation must never register the
+        // same vertex chain again.
+        context.updateState({
+            currentPoints: [],
+            basePoint: null,
+            isDrawing: false,
+            toolStep: 0
+        });
+        context.clearPreview();
+
+        if (pointsToCommit.length > 1) {
+            commit(pointsToCommit, context);
         }
     }
 

@@ -433,7 +433,11 @@
 
     function extrudeSelected(height) {
         const ctx = context();
-        const selected = ctx.getSelectedObjects().filter(o => ['rect', 'rectangle', 'square', 'polyline', 'circle'].includes(String((o.userData || {}).type).toLowerCase()));
+        const selected = Array.from(new Set(ctx.getSelectedObjects())).filter(o =>
+            ['rect', 'rectangle', 'square', 'polyline', 'circle'].includes(
+                String((o.userData || {}).type).toLowerCase()
+            )
+        );
         if (!selected.length) {
             ctx.setPrompt('EXTRUDE — Select closed rectangle, circle or closed polyline profiles first, then run EXTRUDE.');
             return false;
@@ -467,7 +471,14 @@
             created.push({ profile, solid });
         });
         if (!created.length) { ctx.setPrompt('EXTRUDE — No valid closed profiles were found.'); return false; }
+        // EXTRUDE is a replacement operation: remove each 2D profile from
+        // the CAD registry before registering its corresponding 3D solid.
+        // This prevents the original profile and its extrusion being measured
+        // together. The same profile is processed only once.
+        const replacedProfiles = new Set();
         created.forEach(item => {
+            if (replacedProfiles.has(item.profile)) return;
+            replacedProfiles.add(item.profile);
             ctx.removeEntity(item.profile);
             ctx.addEntity(item.solid, false);
         });
