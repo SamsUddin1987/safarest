@@ -24,12 +24,19 @@
     let modelExtent = 1000;
     let target = new THREE.Vector3(0, 0, 0);
     let drag = null;
-    let suppressNextClick = false;
-    let selectionGestureSuppressed = false;
+    let navigationGestureActive = false;
+    let suppressNavigationClick = false;
+    let benchmarkRL = 100.0; // project datum: world Z=0 corresponds to RL 100.000 m
     let lightsAdded = false;
     let button = null;
     let fillButton = null;
-    let solidFillEnabled = false;
+    let solidFillEnabled = true;
+    const SOLID_DISPLAY_STATE_VERSION = 2;
+    // Keep the user's last FILL setting synchronously in browser storage as
+    // well as in the .est/recovery snapshot. This closes the refresh window
+    // where pagehide/async autosave may not finish before the browser reloads.
+    const SOLID_FILL_STORAGE_PREFIX = 'safaredge.solidFillPreference.v1:';
+    let restoreFitToken = 0;
     let environmentControl = null;
     let environmentTexture = null;
     let environmentTarget = null;
@@ -56,6 +63,34 @@
         updateFillButton();
     }
 
+    function solidFillStorageKey() {
+        let projectId = null;
+        try {
+            const projectFiles = global.SafarEdgeProjectFiles;
+            if (projectFiles && typeof projectFiles.getCurrentProjectId === 'function') {
+                projectId = projectFiles.getCurrentProjectId();
+            }
+        } catch (_) {}
+        return SOLID_FILL_STORAGE_PREFIX + (projectId ? String(projectId) : 'unsaved-workspace');
+    }
+
+    function persistSolidFillPreference() {
+        try {
+            global.localStorage.setItem(solidFillStorageKey(), solidFillEnabled ? '1' : '0');
+        } catch (_) {
+            // The .est navigation state remains the fallback when storage is unavailable.
+        }
+    }
+
+    function readSolidFillPreference() {
+        try {
+            const stored = global.localStorage.getItem(solidFillStorageKey());
+            if (stored === '1') return true;
+            if (stored === '0') return false;
+        } catch (_) {}
+        return null;
+    }
+
     function updateFillButton() {
         fillButton = global.document.getElementById('cad-st-3d-fill');
         if (!fillButton) return;
@@ -67,63 +102,69 @@
 
     function ensureSolidEdges(object) {
         if (!object || !object.geometry || !object.children) return null;
-        let edgeLines = object.children.find(child => child.userData && child.userData.isCadSolidEdges);
+        const position = object.geometry.getAttribute('position');
+        const positionVersion = position ? position.version : 0;
+        let edgeLines = object.children.find(child =>
+            child.userData && child.userData.isCadSolidEdges
+        );
+
+        const needsGeometry = !edgeLines ||
+            edgeLines.userData.sourceGeometryId !== object.geometry.uuid ||
+            edgeLines.userData.sourcePositionVersion !== positionVersion;
+
         if (!edgeLines) {
             edgeLines = new THREE.LineSegments(
-                new THREE.EdgesGeometry(object.geometry, 25),
+                new THREE.EdgesGeometry(object.geometry, 1.5),
                 new THREE.LineBasicMaterial({
-                    color: 0x17212b,
-                    depthTest: true,
+                    color: 0xffd54a,
+                    depthTest: false,
                     depthWrite: false,
                     transparent: false,
                     toneMapped: false
                 })
             );
+            edgeLines.name = 'SAFAR_EDGE_SOLID_OUTLINES';
+            edgeLines.userData = edgeLines.userData || {};
             edgeLines.userData.isCadSolidEdges = true;
             object.add(edgeLines);
-        } else if (edgeLines.userData.sourceGeometryUuid !== object.geometry.uuid) {
+        } else if (needsGeometry) {
             if (edgeLines.geometry) edgeLines.geometry.dispose();
-            edgeLines.geometry = new THREE.EdgesGeometry(object.geometry, 25);
+            edgeLines.geometry = new THREE.EdgesGeometry(object.geometry, 1.5);
         }
-        edgeLines.userData.sourceGeometryUuid = object.geometry.uuid;
-        edgeLines.renderOrder = 20;
+
+        edgeLines.userData.sourceGeometryId = object.geometry.uuid;
+        edgeLines.userData.sourcePositionVersion = positionVersion;
+        edgeLines.visible = true; // Skeleton is independent of the surface FILL toggle.
+        edgeLines.renderOrder = 1000;
         edgeLines.frustumCulled = false;
+        if (edgeLines.material) {
+            edgeLines.material.visible = true;
+            edgeLines.material.color.setHex(0xffd54a);
+            edgeLines.material.depthTest = false;
+            edgeLines.material.depthWrite = false;
+            edgeLines.material.transparent = false;
+            edgeLines.material.toneMapped = false;
+            edgeLines.material.needsUpdate = true;
+        }
         return edgeLines;
     }
 
     function applySolidDisplay() {
-        const objects = context().getObjects();
-        objects.forEach(object => {
-            if (!object || !object.userData || object.userData.type !== 'solid' || !object.geometry) return;
-
-            const edgeLines = ensureSolidEdges(object);
+        context().getObjects().forEach(object => {
+            if (!object || !object.userData || object.userData.type !== 'solid') return;
+            object.visible = true;
             const materials = Array.isArray(object.material)
                 ? object.material
                 : (object.material ? [object.material] : []);
-
             materials.forEach(material => {
+                if (!material) return;
                 material.visible = true;
                 material.colorWrite = solidFillEnabled;
                 material.depthWrite = true;
-                // Push the face depth slightly behind its edge overlay so
-                // coplanar EdgesGeometry lines remain visible in FILL OFF.
-                material.polygonOffset = true;
-                material.polygonOffsetFactor = 1;
-                material.polygonOffsetUnits = 1;
                 material.needsUpdate = true;
             });
-
-            if (edgeLines) {
-                edgeLines.visible = !solidFillEnabled;
-                edgeLines.renderOrder = 20;
-                if (edgeLines.material) {
-                    edgeLines.material.visible = !solidFillEnabled;
-                    edgeLines.material.depthTest = true;
-                    edgeLines.material.depthWrite = false;
-                    edgeLines.material.transparent = false;
-                    edgeLines.material.needsUpdate = true;
-                }
-            }
+            const edgeLines = ensureSolidEdges(object);
+            if (edgeLines) edgeLines.visible = true; // Skeleton is independent of the surface FILL toggle.
         });
         updateFillButton();
     }
@@ -142,6 +183,7 @@
             existing.addEventListener('click', event => {
                 event.stopPropagation();
                 solidFillEnabled = !solidFillEnabled;
+                persistSolidFillPreference();
                 applySolidDisplay();
                 if (global.SafarEdgeProjectFiles) global.SafarEdgeProjectFiles.markDirty();
             });
@@ -279,10 +321,10 @@
             sidePanel = global.document.createElement('div');
             sidePanel.id = 'safar-cad-side-panel';
             sidePanel.setAttribute('aria-label', 'CAD Side Panel');
-            sidePanel.style.cssText = 'position:absolute;right:0;top:0;z-index:1200;display:flex;flex-direction:column;align-items:stretch;gap:5px;width:154px;max-width:calc(100% - 8px);max-height:calc(100% - 8px);overflow:visible;padding:5px;background:transparent;font:12px Segoe UI,Arial,sans-serif;pointer-events:none;';
+            sidePanel.style.cssText = 'position:absolute;right:6px;top:6px;z-index:1200;display:flex;flex-direction:column;align-items:stretch;gap:5px;width:190px;max-width:calc(100% - 12px);max-height:calc(100% - 12px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;box-sizing:border-box;padding:4px;background:rgba(10,16,24,.22);border:1px solid rgba(110,130,150,.35);border-radius:7px;backdrop-filter:blur(5px);font:10px Segoe UI,Arial,sans-serif;pointer-events:auto;scrollbar-width:thin;';
             const panelTitle = global.document.createElement('div');
             panelTitle.textContent = 'CAD SIDE PANEL';
-            panelTitle.style.cssText = 'padding:5px 7px;text-align:center;background:rgba(20,29,40,.97);border:1px solid #435367;border-radius:5px;color:#dce6f2;font-size:9px;font-weight:700;letter-spacing:.12em;box-shadow:0 2px 8px rgba(0,0,0,.22);pointer-events:auto;';
+            panelTitle.style.cssText = 'flex:none;padding:5px 7px;text-align:center;background:rgba(20,29,40,.97);border:1px solid #435367;border-radius:5px;color:#dce6f2;font-size:9px;font-weight:700;letter-spacing:.12em;box-shadow:0 2px 8px rgba(0,0,0,.22);pointer-events:auto;';
             sidePanel.appendChild(panelTitle);
             pane.appendChild(sidePanel);
         }
@@ -295,7 +337,7 @@
         if (!panel) return null;
         viewCube = global.document.createElement('div');
         viewCube.id = 'safar-cad-side-panel-navigation';
-        viewCube.style.cssText = 'position:relative;display:flex;flex-direction:column;gap:4px;padding:6px;background:rgba(20,29,40,.97);border:1px solid #435367;border-radius:5px;box-shadow:0 3px 12px rgba(0,0,0,.28);font:11px Segoe UI,Arial,sans-serif;pointer-events:auto;';
+        viewCube.style.cssText = 'position:relative;flex:none;display:flex;flex-direction:column;gap:4px;padding:5px;background:rgba(20,29,40,.97);border:1px solid #435367;border-radius:5px;box-shadow:0 3px 12px rgba(0,0,0,.28);font:11px Segoe UI,Arial,sans-serif;pointer-events:auto;';
         const title = global.document.createElement('div');
         title.textContent = 'VIEW NAVIGATION';
         title.style.cssText = 'font-size:9px;font-weight:700;letter-spacing:.1em;color:#9fb2c8;text-align:left;padding:0 1px 3px;';
@@ -314,7 +356,7 @@
                 btn.type = 'button';
                 btn.textContent = label;
                 btn.style.cssText = 'flex:1;min-width:0;padding:5px 3px;color:#e5edf6;background:#293747;border:1px solid #46596d;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;letter-spacing:.02em;transition:background .12s,border-color .12s,box-shadow .12s;';
-                btn.title = view === 'iso' ? '3D isometric view: right mouse drag to orbit; middle mouse drag to pan; scroll to zoom' : `${label} orthographic view: middle or right mouse drag to pan`;
+                btn.title = view === 'iso' ? '3D isometric view: hold the mouse wheel and drag to pan; use the view controls to change orientation' : `${label} orthographic view: hold the mouse wheel and drag to pan`;
                 btn.addEventListener('click', event => { event.stopPropagation(); setStandardView(view); });
                 viewButtons[view] = btn;
                 line.appendChild(btn);
@@ -415,7 +457,7 @@
 
         layerQuickPanel = global.document.createElement('div');
         layerQuickPanel.id = 'safar-cad-side-panel-object-layer';
-        layerQuickPanel.style.cssText = 'position:relative;display:flex;flex-direction:column;gap:4px;padding:6px;background:rgba(20,29,40,.97);border:1px solid #435367;border-radius:5px;box-shadow:0 3px 12px rgba(0,0,0,.28);font:11px Segoe UI,Arial,sans-serif;pointer-events:auto;';
+        layerQuickPanel.style.cssText = 'position:relative;flex:none;display:flex;flex-direction:column;gap:4px;padding:5px;background:rgba(20,29,40,.97);border:1px solid #435367;border-radius:5px;box-shadow:0 3px 12px rgba(0,0,0,.28);font:11px Segoe UI,Arial,sans-serif;pointer-events:auto;';
 
         const label = global.document.createElement('label');
         label.htmlFor = 'safar-object-layer-select';
@@ -459,21 +501,24 @@
             dimensionInputs = {
                 length: section.querySelector('#safar-object-length-input'),
                 width: section.querySelector('#safar-object-width-input'),
-                radius: section.querySelector('#safar-object-radius-input')
+                radius: section.querySelector('#safar-object-radius-input'),
+                benchmark: section.querySelector('#safar-benchmark-rl-input'),
+                bottomRL: section.querySelector('#safar-bottom-rl-input'),
+                topRL: section.querySelector('#safar-top-rl-input')
             };
             refreshDimensionPanel();
             return section;
         }
         section = global.document.createElement('div');
         section.id = 'safar-cad-side-panel-extrude';
-        section.style.cssText = 'position:relative;display:flex;flex-direction:column;gap:5px;padding:7px;background:rgba(20,29,40,.97);border:1px solid #435367;border-radius:5px;box-shadow:0 3px 12px rgba(0,0,0,.28);font:11px Segoe UI,Arial,sans-serif;pointer-events:auto;';
+        section.style.cssText = 'position:relative;flex:none;display:grid;grid-template-columns:1fr;gap:4px;padding:6px;background:rgba(20,29,40,.98);border:1px solid #435367;border-radius:5px;box-shadow:0 3px 12px rgba(0,0,0,.28);font:10px Segoe UI,Arial,sans-serif;pointer-events:auto;box-sizing:border-box;';
         const makeField = (id, labelText, title) => {
             const wrap = global.document.createElement('label');
-            wrap.style.cssText = 'display:flex;flex-direction:column;gap:3px;color:#9fb2c8;font-size:9px;font-weight:700;letter-spacing:.06em;';
+            wrap.style.cssText = 'display:grid;grid-template-columns:minmax(78px, .9fr) minmax(0,1.1fr);align-items:center;gap:5px;color:#b7c7d8;font-size:9px;font-weight:650;letter-spacing:.02em;min-width:0;';
             wrap.textContent = labelText;
             const input = global.document.createElement('input');
-            input.type = 'number'; input.id = id; input.min = '0.001'; input.step = 'any'; input.title = title;
-            input.style.cssText = 'box-sizing:border-box;width:100%;min-width:0;background:#263545;color:#edf3f9;border:1px solid #50647a;border-radius:3px;padding:6px 5px;font:11px Segoe UI,Arial,sans-serif;outline:none;';
+            input.type = 'number'; input.id = id; input.min = '-100000000'; input.step = 'any'; input.title = title;
+            input.style.cssText = 'box-sizing:border-box;width:100%;min-width:0;height:25px;background:#263545;color:#edf3f9;border:1px solid #50647a;border-radius:3px;padding:3px 5px;font:10px Segoe UI,Arial,sans-serif;outline:none;';
             input.addEventListener('mousedown', event => event.stopPropagation());
             input.addEventListener('click', event => event.stopPropagation());
             wrap.appendChild(input); section.appendChild(wrap); return input;
@@ -482,7 +527,11 @@
         dimensionInputs.length = makeField('safar-object-length-input', 'LENGTH (mm)', 'Selected object overall length. Edit and press Enter to apply.');
         dimensionInputs.width = makeField('safar-object-width-input', 'WIDTH (mm)', 'Selected object overall width. Edit and press Enter to apply.');
         dimensionInputs.radius = makeField('safar-object-radius-input', 'RADIUS (mm)', 'Selected circle/cylinder radius. Edit and press Enter to apply.');
-        [extrudeHeightInput, dimensionInputs.length, dimensionInputs.width, dimensionInputs.radius].forEach(input => {
+        dimensionInputs.benchmark = makeField('safar-benchmark-rl-input', 'DATUM RL (m)', 'Editable project benchmark. World Z=0 corresponds to this RL.');
+        dimensionInputs.bottomRL = makeField('safar-bottom-rl-input', 'BOTTOM RL (m)', 'Selected solid bottom reduced level. Edit and press Enter to move vertically.');
+        dimensionInputs.topRL = makeField('safar-top-rl-input', 'TOP RL (m)', 'Selected solid top reduced level. Edit and press Enter to adjust its height.');
+        dimensionInputs.benchmark.value = benchmarkRL.toFixed(3);
+        [extrudeHeightInput, dimensionInputs.length, dimensionInputs.width, dimensionInputs.radius, dimensionInputs.benchmark, dimensionInputs.bottomRL, dimensionInputs.topRL].forEach(input => {
             input.addEventListener('keydown', event => {
                 if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); applyDimensionInput(input); }
             });
@@ -527,16 +576,63 @@
         if (dimensionInputs.width) dimensionInputs.width.value = dims ? String(dims.width) : '';
         if (dimensionInputs.radius) {
             dimensionInputs.radius.value = circle ? String(Number(data.radius) || (dims ? Math.max(dims.length, dims.width) / 2 : '')) : '';
-            dimensionInputs.radius.closest('label').style.display = circle ? 'flex' : 'none';
+            dimensionInputs.radius.closest('label').style.display = circle ? 'grid' : 'none';
         }
         ['length','width'].forEach(key => { if (dimensionInputs[key]) dimensionInputs[key].disabled = !single || !!circle; });
+        const worldBox = single ? new THREE.Box3().setFromObject(single) : null;
+        const showLevels = !!(isSolid && worldBox && !worldBox.isEmpty());
+        if (dimensionInputs.benchmark) {
+            if (global.document.activeElement !== dimensionInputs.benchmark) dimensionInputs.benchmark.value = benchmarkRL.toFixed(3);
+        }
+        if (dimensionInputs.bottomRL) {
+            dimensionInputs.bottomRL.value = showLevels ? (benchmarkRL + worldBox.min.z / 1000).toFixed(3) : '';
+            dimensionInputs.bottomRL.disabled = !showLevels;
+        }
+        if (dimensionInputs.topRL) {
+            dimensionInputs.topRL.value = showLevels ? (benchmarkRL + worldBox.max.z / 1000).toFixed(3) : '';
+            dimensionInputs.topRL.disabled = !showLevels;
+        }
+        if (dimensionInputs.benchmark) dimensionInputs.benchmark.disabled = false;
         if (extrudeHeightInput) extrudeHeightInput.disabled = selected.length > 1;
     }
 
     function applyDimensionInput(input) {
         const value = Number(input.value);
-        if (!Number.isFinite(value) || value <= 0) { context().setPrompt('DIMENSION — Enter a positive value in millimetres.'); return; }
+        const isElevationField = input === dimensionInputs.benchmark || input === dimensionInputs.bottomRL || input === dimensionInputs.topRL;
+        if (!Number.isFinite(value) || (!isElevationField && value <= 0)) { context().setPrompt('DIMENSION — Enter a valid positive dimension or a valid elevation.'); return; }
         const selected = context().getSelectedObjects().filter(Boolean);
+        if (input === dimensionInputs.benchmark) {
+            benchmarkRL = value;
+            refreshDimensionPanel();
+            if (global.SafarEdgeProjectFiles) global.SafarEdgeProjectFiles.markDirty();
+            context().setPrompt(`DATUM RL — Project benchmark set to ${benchmarkRL.toFixed(3)} m.`);
+            return;
+        }
+        if (input === dimensionInputs.bottomRL || input === dimensionInputs.topRL) {
+            if (selected.length !== 1 || !selected[0].userData || selected[0].userData.type !== 'solid') {
+                context().setPrompt('LEVEL — Select exactly one extruded solid to edit its levels.'); return;
+            }
+            const object = selected[0];
+            const worldBox = new THREE.Box3().setFromObject(object);
+            if (worldBox.isEmpty()) return;
+            const before = context().captureObjects([object]);
+            if (input === dimensionInputs.bottomRL) {
+                const targetWorldZ = (value - benchmarkRL) * 1000;
+                object.position.z += targetWorldZ - worldBox.min.z;
+            } else {
+                const bottomRL = benchmarkRL + worldBox.min.z / 1000;
+                const requestedHeight = (value - bottomRL) * 1000;
+                if (requestedHeight <= 0) { context().setPrompt('LEVEL ERROR — Top RL must be higher than bottom RL.'); return; }
+                setSelectedSolidHeight(requestedHeight);
+                return;
+            }
+            object.updateMatrixWorld(true);
+            context().recordModify([object], before);
+            if (global.SafarEdgeProjectFiles) global.SafarEdgeProjectFiles.markDirty();
+            refreshDimensionPanel();
+            context().setPrompt('LEVEL — Selected solid elevation updated.');
+            return;
+        }
         if (input === extrudeHeightInput) {
             extrudeHeightMm = value;
             const solids = selected.filter(o => o.userData && o.userData.type === 'solid');
@@ -585,9 +681,14 @@
     }
 
     function updateSolidEdges(object) {
-        if (!object || !object.children) return;
-        const edge = object.children.find(child => child.userData && child.userData.isCadSolidEdges);
-        if (edge) { if (edge.geometry) edge.geometry.dispose(); edge.geometry = new THREE.EdgesGeometry(object.geometry, 25); edge.visible = true; edge.renderOrder = 20; }
+        if (!object || !object.geometry) return;
+        const edge = object.children && object.children.find(child =>
+            child.userData && child.userData.isCadSolidEdges
+        );
+        if (edge && edge.geometry) edge.geometry.dispose();
+        if (edge) edge.userData.sourcePositionVersion = -1;
+        ensureSolidEdges(object);
+        applySolidDisplay();
     }
 
     function getSharedExtrudeHeight() {
@@ -784,45 +885,45 @@
         return '3D';
     }
 
+    function cancelCorePointerGesture() {
+        if (global.CADInteraction && typeof global.CADInteraction.cancelPointerGesture === 'function') {
+            global.CADInteraction.cancelPointerGesture();
+        }
+    }
+
     function onDown(event) {
         if (event.target && event.target.closest && event.target.closest('#safar-3d-navigation')) return;
-
-        // If the user adds the left button during an active orbit/pan gesture,
-        // consume it too. This prevents the CAD editor from starting a pick.
-        if (drag && (event.button === 0 || event.button === 1 || event.button === 2)) {
-            if (event.button === 0) suppressNextClick = true;
-            selectionGestureSuppressed = true;
+        // A deliberate left+right chord is the ISO orbit gesture. The first
+        // button may already have started a SELECT window in the CAD core, so
+        // cancel that state as soon as the second button joins the chord.
+        if (event.buttons === 3 || (navigationGestureActive && event.buttons !== 0)) {
             event.preventDefault();
             event.stopImmediatePropagation();
+            navigationGestureActive = true;
+            suppressNavigationClick = true;
+            cancelCorePointerGesture();
+            const el = renderer()?.domElement;
+            if (!drag) drag = { x: event.clientX, y: event.clientY, moved: false, previousCursor: el ? el.style.cursor : '' };
+            drag.kind = 'orbit';
+            drag.x = event.clientX;
+            drag.y = event.clientY;
+            if (el) el.style.cursor = 'grabbing';
             return;
         }
         if (event.button !== 1 && event.button !== 2) return;
-
-        // Right/middle drag is navigation, never a CAD selection gesture.
-        selectionGestureSuppressed = true;
-        if ((event.buttons & 1) !== 0) suppressNextClick = true;
         event.preventDefault();
         event.stopImmediatePropagation();
-
-        const cam = camera();
         const el = renderer()?.domElement;
-        const kind = (event.button === 2 && orbitEnabled) ? 'orbit' : 'pan';
         drag = {
-            x: event.clientX,
-            y: event.clientY,
-            button: event.button,
-            moved: false,
-            kind,
-            previousCursor: el ? el.style.cursor : ''
+            x: event.clientX, y: event.clientY, button: event.button,
+            moved: false, kind: 'pan', previousCursor: el ? el.style.cursor : ''
         };
         if (el) el.style.cursor = 'grabbing';
-        if (cam) drag.start = cam.position.clone();
     }
 
     function onMove(event) {
-        if (!drag) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
+        if (!drag || (!navigationGestureActive && event.buttons === 0)) return;
+        event.preventDefault(); event.stopImmediatePropagation();
         const cam = camera();
         const r = renderer();
         const dx = event.clientX - drag.x;
@@ -832,6 +933,8 @@
         if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
         if (!drag.moved) return;
         if (drag.kind === 'orbit') {
+            // Z-up orbit, with small incremental angles rather than reapplying
+            // the entire mouse displacement on every event.
             const offset = cam.position.clone().sub(target);
             const radius = Math.max(offset.length(), 1);
             let azimuth = Math.atan2(offset.y, offset.x);
@@ -849,33 +952,35 @@
             const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
             const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
             const shift = right.multiplyScalar(-dx * worldPerPixel).add(up.multiplyScalar(dy * worldPerPixel));
-            cam.position.add(shift);
-            target.add(shift);
+            cam.position.add(shift); target.add(shift);
         }
         cam.updateMatrixWorld(true);
     }
 
     function onUp(event) {
-        if (!selectionGestureSuppressed && !drag) return;
-        if (selectionGestureSuppressed || drag) {
-            event.preventDefault();
-            event.stopImmediatePropagation();
-        }
-        // Keep the gesture locked until every mouse button is released.
-        // `buttons === 0` means no left/right/middle button remains held.
-        if (event.buttons !== 0) return;
-
-        const el = renderer()?.domElement;
-        if (el && drag) el.style.cursor = drag.previousCursor || '';
-        drag = null;
-        selectionGestureSuppressed = false;
-    }
-
-    function onClickCapture(event) {
-        if (!suppressNextClick) return;
-        suppressNextClick = false;
+        if (!drag && !navigationGestureActive) return;
         event.preventDefault();
         event.stopImmediatePropagation();
+        // MouseEvent.buttons reports the other button still held. Keep the
+        // orbit session alive until BOTH left and right buttons are released.
+        if (navigationGestureActive && event.buttons !== 0) return;
+        const el = renderer()?.domElement;
+        drag = null;
+        if (navigationGestureActive) {
+            navigationGestureActive = false;
+            suppressNavigationClick = true;
+            global.setTimeout(() => { suppressNavigationClick = false; }, 0);
+            cancelCorePointerGesture();
+            // Cancellation clears selection/grip/pan state. Restore the actual
+            // CAD selection cursor last so no cleanup callback leaves a hand.
+            if (global.SafarEdgeCadCursor && typeof global.SafarEdgeCadCursor.restore === 'function') {
+                global.SafarEdgeCadCursor.restore();
+            } else if (el) {
+                el.style.cursor = 'crosshair';
+            }
+        } else if (el) {
+            el.style.cursor = drag && drag.previousCursor ? drag.previousCursor : '';
+        }
     }
 
     function pick3DObject(event) {
@@ -897,6 +1002,13 @@
         if (objects.includes(owner)) context().setSelection([owner]);
     }
 
+    function onClickCapture(event) {
+        if (!suppressNavigationClick) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        suppressNavigationClick = false;
+    }
+
     function onWheel(event) {
 
         event.preventDefault(); event.stopImmediatePropagation();
@@ -915,11 +1027,14 @@
         global.addEventListener('mousemove', onMove, true);
         global.addEventListener('mouseup', onUp, true);
         global.addEventListener('blur', () => {
-            if (!drag) return;
-            el.style.cursor = drag.previousCursor || '';
-            drag = null;
-            selectionGestureSuppressed = false;
-            suppressNextClick = false;
+            if (!drag && !navigationGestureActive) return;
+            drag = null; navigationGestureActive = false; suppressNavigationClick = true;
+            cancelCorePointerGesture();
+            if (global.SafarEdgeCadCursor && typeof global.SafarEdgeCadCursor.restore === 'function') {
+                global.SafarEdgeCadCursor.restore();
+            } else {
+                el.style.cursor = 'crosshair';
+            }
         });
         el.addEventListener('wheel', onWheel, { capture: true, passive: false });
         el.addEventListener('contextmenu', event => event.preventDefault(), true);
@@ -981,19 +1096,26 @@
             geometry.computeVertexNormals();
             geometry.computeBoundingBox();
             const material = new THREE.MeshStandardMaterial({ color: 0x8aa7bd, metalness: 0.18, roughness: 0.52, side: THREE.DoubleSide });
-            // Surface fill is shown only in 3D and only when FILL is enabled.
+            // Keep mesh alive for depth; FILL controls surface colour only.
             material.visible = true;
             material.colorWrite = solidFillEnabled;
             const solid = new THREE.Mesh(geometry, material);
             solid.castShadow = true;
             solid.receiveShadow = true;
-            const edgeGeometry = new THREE.EdgesGeometry(geometry, 25);
-            const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x243746, depthTest: true, transparent: false });
-            const edgeLines = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+            const edgeLines = new THREE.LineSegments(
+                new THREE.EdgesGeometry(geometry, 1.5),
+                new THREE.LineBasicMaterial({
+                    color: 0xffd54a, depthTest: false, depthWrite: false,
+                    transparent: false, toneMapped: false
+                })
+            );
+            edgeLines.name = 'SAFAR_EDGE_SOLID_OUTLINES';
             edgeLines.userData.isCadSolidEdges = true;
-            edgeLines.renderOrder = 20;
-            edgeMaterial.depthTest = true;
-            edgeMaterial.depthWrite = false;
+            edgeLines.userData.sourceGeometryId = geometry.uuid;
+            edgeLines.userData.sourcePositionVersion = geometry.getAttribute('position')?.version || 0;
+            edgeLines.renderOrder = 1000;
+            edgeLines.frustumCulled = false;
+            edgeLines.visible = true; // Skeleton is independent of the surface FILL toggle.
             solid.add(edgeLines);
             const factor = result.area / Math.max(result.length * result.width, 1e-12);
             const profileType = String(
@@ -1170,8 +1292,12 @@
     }
 
     function getNavigationState() {
+        // Also stamp the project-scoped preference during every project save.
+        persistSolidFillPreference();
         return {
+            solidDisplayStateVersion: SOLID_DISPLAY_STATE_VERSION,
             solidFillEnabled: solidFillEnabled,
+            benchmarkRL: benchmarkRL,
             target: target.toArray(),
             saved2DView: saved2DView ? {
                 position: saved2DView.position.toArray(),
@@ -1186,8 +1312,20 @@
     }
 
     function restoreNavigationState(state) {
-        if (!state || typeof state !== 'object') return;
-        if (typeof state.solidFillEnabled === 'boolean') solidFillEnabled = state.solidFillEnabled;
+        if (!state || typeof state !== 'object') state = {};
+        // Prefer the synchronously persisted per-project value. It survives a
+        // hard refresh even if the asynchronous recovery snapshot was interrupted.
+        const storedFillPreference = readSolidFillPreference();
+        if (storedFillPreference !== null) {
+            solidFillEnabled = storedFillPreference;
+        } else if (state.solidDisplayStateVersion >= SOLID_DISPLAY_STATE_VERSION &&
+            typeof state.solidFillEnabled === 'boolean') {
+            solidFillEnabled = state.solidFillEnabled;
+        } else {
+            solidFillEnabled = true;
+        }
+        persistSolidFillPreference();
+        if (Number.isFinite(Number(state.benchmarkRL))) benchmarkRL = Number(state.benchmarkRL);
         if (Array.isArray(state.target) && state.target.length === 3) target.fromArray(state.target);
         const saved = state.saved2DView;
         if (saved && Array.isArray(saved.position) && Array.isArray(saved.quaternion) && Array.isArray(saved.up)) {
@@ -1213,6 +1351,24 @@
         createEnvironmentControls();
         createQuickLayerSelector();
         applySolidDisplay();
+
+        // Restored drawings can finish loading after the viewport is first laid
+        // out. Fit only the camera, preserve its direction, and never move CAD entities.
+        const fitToken = ++restoreFitToken;
+        global.requestAnimationFrame(() => global.requestAnimationFrame(() => {
+            global.setTimeout(() => {
+                if (fitToken !== restoreFitToken) return;
+                const currentRenderer = renderer();
+                if (!currentRenderer || !currentRenderer.domElement) return;
+                const rect = currentRenderer.domElement.getBoundingClientRect();
+                if (rect.width < 40 || rect.height < 40) return;
+                const bounds = getVisibleModelBounds();
+                if (!bounds || bounds.isEmpty()) return;
+                fitModel();
+                applySolidDisplay();
+                refreshDimensionPanel();
+            }, 250);
+        }));
     }
 
 
@@ -1408,8 +1564,7 @@
             transparent: !!preset.transparent, opacity: preset.opacity || 1,
             side: THREE.DoubleSide
         });
-        object.material.visible = true;
-        object.material.colorWrite = solidFillEnabled;
+        object.material.visible = solidFillEnabled;
         object.userData = object.userData || {};
         object.userData.materialPreset = name;
         object.userData.originalColor = new THREE.Color(preset.color).getHex();
@@ -1490,8 +1645,9 @@
         getDrawingFrame,
         extrudeSelected,
         setSelectedSolidHeight,
-        setSolidFillEnabled: enabled => { solidFillEnabled = !!enabled; applySolidDisplay(); },
+        setSolidFillEnabled: enabled => { solidFillEnabled = !!enabled; persistSolidFillPreference(); applySolidDisplay(); },
         isSolidFillEnabled: () => solidFillEnabled,
+        isNavigationGestureActive: () => navigationGestureActive,
         getMaterialPresets: () => Object.keys(MATERIAL_PRESETS).map(name => ({ name, color: MATERIAL_PRESETS[name].color })),
         applyLayerMaterial: (object, name) => !!(MATERIAL_PRESETS[name] && object && object.isMesh && applyPresetToObject(object, name))
     };

@@ -392,6 +392,7 @@ function addSelectedObject(obj) {
 }
 
 function onCanvasClick(event) {
+    if (window.SafarEdge3D && window.SafarEdge3D.isNavigationGestureActive && window.SafarEdge3D.isNavigationGestureActive()) return;
 
     // Ignore the click following a completed box selection or drag
     if (suppressNextClick) {
@@ -496,6 +497,7 @@ function setupSelectionBox(container) {
 }
 
 function onMouseDown(event) {
+    if (window.SafarEdge3D && window.SafarEdge3D.isNavigationGestureActive && window.SafarEdge3D.isNavigationGestureActive()) return;
     if (osnapMenuEl) osnapMenuEl.style.display = 'none';
 
     // Middle button (wheel press) = PAN, works in every tool
@@ -620,6 +622,7 @@ function updateBoxSelect(event) {
 }
 
 function onMouseUp(event) {
+    if (window.SafarEdge3D && window.SafarEdge3D.isNavigationGestureActive && window.SafarEdge3D.isNavigationGestureActive()) return;
     // Commit one grip edit as a single undoable operation.
     if (event.button === 0 && selectionGripDrag) {
         const drag = selectionGripDrag;
@@ -801,3 +804,23 @@ function segIntersectsRect(a, b, r) {
 }
 
 // ==========================================
+
+
+// Shared cancellation hook used by the 3D navigation layer when a two-button
+// orbit chord begins. It clears every CAD-core drag/selection gesture so the
+// remaining mouseup/click cannot select an object or finish a box selection.
+window.CADInteraction = window.CADInteraction || {};
+window.CADInteraction.cancelPointerGesture = function () {
+    if (typeof cancelBoxSelect === 'function') cancelBoxSelect();
+    if (typeof boxSel !== 'undefined') { boxSel.down = false; boxSel.active = false; }
+    if (typeof selectionGripDrag !== 'undefined' && selectionGripDrag) {
+        if (selectionGripDrag.originalGeometry) selectionGripDrag.originalGeometry.dispose();
+        selectionGripDrag = null;
+    }
+    if (typeof objectDrag !== 'undefined') objectDrag = null;
+    if (typeof isPanning !== 'undefined') isPanning = false;
+    if (typeof suppressNextClick !== 'undefined') {
+        suppressNextClick = true;
+        setTimeout(() => { suppressNextClick = false; }, 250);
+    }
+};
