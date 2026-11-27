@@ -543,24 +543,24 @@
                     <div class="cad-menu-panel">
 
                         <button class="cad-menu-item" onclick="window.runCADCommand('ERASE')">
-                            Erase
+                            Erase (E)
                         </button>
 
                         <hr>
 
-                        <button class="cad-menu-item" onclick="window.runCADCommand('MOVE')">Move</button>
-                        <button class="cad-menu-item" onclick="window.runCADCommand('COPY')">Copy</button>
-                        <button class="cad-menu-item" onclick="window.runCADCommand('ROTATE')">Rotate</button>
-                        <button class="cad-menu-item" onclick="window.runCADCommand('SCALE')">Scale</button>
-                        <button class="cad-menu-item" onclick="window.runCADCommand('MIRROR')">Mirror</button>
-                        <button class="cad-menu-item" onclick="window.runCADCommand('JOIN')">Join</button>
-                        <button class="cad-menu-item" onclick="window.runCADCommand('EXTRUDE')">Extrude</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('MOVE')">Move (M)</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('COPY')">Copy (CO)</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('ROTATE')">Rotate (RO)</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('SCALE')">Scale (SC)</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('MIRROR')">Mirror (MI)</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('JOIN')">Join (J)</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('EXTRUDE')">Extrude (EXTD)</button>
                         <button class="cad-menu-item" disabled>Offset</button>
 
                         <hr>
 
-                        <button class="cad-menu-item" onclick="window.runCADCommand('TRIM')">Trim</button>
-                        <button class="cad-menu-item" onclick="window.runCADCommand('EXTEND')">Extend</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('TRIM')">Trim (TR)</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('EXTEND')">Extend (EX)</button>
                         <button class="cad-menu-item" disabled>Fillet</button>
                         <button class="cad-menu-item" disabled>Chamfer</button>
                         <button class="cad-menu-item" disabled>Stretch</button>
@@ -568,7 +568,7 @@
                         <hr>
 
                         <button class="cad-menu-item" disabled>Array</button>
-                        <button class="cad-menu-item" onclick="window.runCADCommand('EXPLODE')">Explode</button>
+                        <button class="cad-menu-item" onclick="window.runCADCommand('EXPLODE')">Explode (X)</button>
 
                     </div>
                 </div>
@@ -780,20 +780,20 @@
 
 <!-- CORE -->
 <script src="{% static 'js/cad/core/cad-registry.js' %}?v=20261123-5"></script>
-<script src="{% static 'js/cad/core/cad-core.js' %}?v=20261125-measure-1"></script>
+<script src="{% static 'js/cad/core/cad-core.js' %}?v=20261127-iso-nodes-2"></script>
 
 <!-- DRAW COMMANDS -->
 <!-- INDEPENDENT DRAW COMMANDS -->
 <script src="{% static 'js/cad/commands/draw/line.js' %}?v=20261123-5"></script>
 <script src="{% static 'js/cad/commands/draw/polyline.js' %}?v=20261125-measure-1"></script>
-<script src="{% static 'js/cad/commands/draw/rectangle.js' %}?v=20261123-5"></script>
-<script src="{% static 'js/cad/commands/draw/circle.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/draw/rectangle.js' %}?v=20261127-draftplane-1"></script>
+<script src="{% static 'js/cad/commands/draw/circle.js' %}?v=20261127-draftplane-1"></script>
 <script src="{% static 'js/cad/commands/draw/text.js' %}?v=20261123-5"></script>
 
 <!-- MODIFY COMMANDS -->
 <script src="{% static 'js/cad/core/modify-utils.js' %}?v=20261125-extend-2"></script>
 <script src="{% static 'js/cad/commands/modify/erase.js' %}?v=20261123-5"></script>
-<script src="{% static 'js/cad/commands/modify/move.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/commands/modify/move.js' %}?v=20261127-iso-move-2"></script>
 <script src="{% static 'js/cad/commands/modify/copy.js' %}?v=20261123-5"></script>
 <script src="{% static 'js/cad/commands/modify/rotate.js' %}?v=20261123-5"></script>
 <script src="{% static 'js/cad/commands/modify/scale.js' %}?v=20261123-5"></script>
@@ -817,16 +817,16 @@
 <script src="{% static 'js/cad/commands/dimension/dim-style-commands.js' %}?v=20261123-5"></script>
 
 <!-- INTERACTION -->
-<script src="{% static 'js/cad/interaction/cad-input.js' %}?v=20261123-5"></script>
+<script src="{% static 'js/cad/interaction/cad-input.js' %}?v=20261127-draftplane-1"></script>
 <script src="{% static 'js/cad/interaction/cad-interaction.js' %}?v=20261125-4"></script>
-<script src="{% static 'js/cad/interaction/cad-snapping.js' %}?v=20261125-measure-status-1"></script>
+<script src="{% static 'js/cad/interaction/cad-snapping.js' %}?v=20261127-move-3d-osnap-1"></script>
 
 <!-- HISTORY -->
 <script src="{% static 'js/cad/history/cad-history-view.js' %}?v=20261125-measure-1"></script>
 
 <!-- VIEW NAVIGATION -->
 <script src="{% static 'js/cad/commands/view/view-navigation.js' %}?v=20261124-1"></script>
-<script src="{% static 'js/cad/commands/view/zoom.js' %}?v=20261124-1"></script>
+<script src="{% static 'js/cad/commands/view/zoom.js' %}?v=20261127-zoom3d-1"></script>
 <script src="{% static 'js/cad/commands/view/pan.js' %}?v=20261124-1"></script>
 <script src="{% static 'js/cad/commands/view/limits.js' %}?v=20261124-1"></script>
 
@@ -834,7 +834,7 @@
 <script src="{% static 'js/cad/command-line/cad-command-line.js' %}?v=20261124-1"></script>
 
 <!-- EXISTING TOOLS AND ENTITIES -->
-<script src="{% static 'js/cad/cad-tools.js' %}?v=20261125-4"></script>
+<script src="{% static 'js/cad/cad-tools.js' %}?v=20261127-iso-move-2"></script>
 <script src="{% static 'js/cad/entities/cad-entities.js' %}?v=20261123-5"></script>
 
 <!-- KEYBOARD AND IMPORT -->
@@ -844,9 +844,9 @@
 <!-- NATIVE PROJECT FILE SYSTEM -->
 <script src="{% static 'js/cad/io/cad-project-files.js' %}?v=20261126-workspace-2"></script>
 <!-- CAD CLOSED-POLYLINE MEASUREMENT TAKEOFF -->
-<script src="{% static 'js/cad/io/cad-measurement-takeoff.js' %}?v=20261125-measure-units-factor-2"></script>
+<script src="{% static 'js/cad/io/cad-measurement-takeoff.js' %}?v=20261127-measurement-audit-1"></script>
 <script src="{% static 'js/cad/interaction/cad-split-view.js' %}?v=20261126-split-2"></script>
-<script src="{% static 'js/cad/interaction/cad-3d-modeling.js' %}?v=20261126-3d-edit-fill-2"></script>
+<script src="{% static 'js/cad/interaction/cad-3d-modeling.js' %}?v=20261127-dimension-panel-audit-1"></script>
 
 <script>
 // ============================================

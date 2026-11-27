@@ -424,7 +424,7 @@
                 typeof global.SafarEdgeSplitView.restoreForProject === 'function') {
                 global.SafarEdgeSplitView.restoreForProject(
                     currentFileName,
-                    snapshot.data.project && snapshot.data.project.workspace,
+                    data.project && data.project.workspace,
                     currentProjectId
                 );
             }

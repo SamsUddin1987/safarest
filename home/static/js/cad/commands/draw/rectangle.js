@@ -21,20 +21,40 @@
         throw new Error('RECTANGLE: CAD Registry or Three.js unavailable.');
     }
 
+    function getDrawingAxes() {
+        const frame = global.SafarEdge3D &&
+            typeof global.SafarEdge3D.getDrawingFrame === 'function'
+            ? global.SafarEdge3D.getDrawingFrame() : null;
+        return frame || {
+            u: new THREE.Vector3(1, 0, 0),
+            v: new THREE.Vector3(0, 1, 0)
+        };
+    }
+
     function rectanglePoints(p1, p2) {
+        const axes = getDrawingAxes();
+        const delta = p2.clone().sub(p1);
+        const width = delta.dot(axes.u);
+        const height = delta.dot(axes.v);
+        const p2u = p1.clone().addScaledVector(axes.u, width);
+        const p2v = p1.clone().addScaledVector(axes.v, height);
 
         return [
-            new THREE.Vector3(p1.x, p1.y, 0),
-            new THREE.Vector3(p2.x, p1.y, 0),
-            new THREE.Vector3(p2.x, p2.y, 0),
-            new THREE.Vector3(p1.x, p2.y, 0),
-            new THREE.Vector3(p1.x, p1.y, 0)
+            p1.clone(),
+            p2u,
+            p1.clone().addScaledVector(axes.u, width).addScaledVector(axes.v, height),
+            p2v,
+            p1.clone()
         ];
     }
 
     function commit(p1, p2, context) {
 
-        if (p1.x === p2.x || p1.y === p2.y) {
+        const axes = getDrawingAxes();
+        const delta = p2.clone().sub(p1);
+        const width = delta.dot(axes.u);
+        const height = delta.dot(axes.v);
+        if (Math.abs(width) < 1e-9 || Math.abs(height) < 1e-9) {
 
             context.setPrompt(
                 'RECTANG — Zero width or height, rectangle not created.'
@@ -119,13 +139,10 @@
 
         context.setPreview(preview);
 
-        const width = Math.abs(
-            point.x - state.basePoint.x
-        );
-
-        const height = Math.abs(
-            point.y - state.basePoint.y
-        );
+        const axes = getDrawingAxes();
+        const delta = point.clone().sub(state.basePoint);
+        const width = Math.abs(delta.dot(axes.u));
+        const height = Math.abs(delta.dot(axes.v));
 
         context.setPrompt(
             `RECTANG — W: ${context.formatValue(width)}  H: ${context.formatValue(height)}`

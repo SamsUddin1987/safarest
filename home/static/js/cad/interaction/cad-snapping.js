@@ -265,12 +265,12 @@ function worldPerPixel() {
            rect.width;
 }
 
-function worldToScreen(x, y) {
+function worldToScreen(x, y, z = 0) {
     camera.updateMatrixWorld(true);
 
     const rect = renderer.domElement.getBoundingClientRect();
 
-    const v = new THREE.Vector3(x, y, 0).project(camera);
+    const v = new THREE.Vector3(x, y, z || 0).project(camera);
 
     return {
         x: ((v.x + 1) / 2) * rect.width,
@@ -297,6 +297,58 @@ function constrainPointToOrtho(point, origin) {
 function shouldApplyPointOrtho() {
     return orthoOn && isDrawing && basePoint &&
         ['line', 'polyline', 'move', 'copy'].includes(currentTool);
+}
+
+// MOVE uses screen-space 3D node snapping. The ordinary 2D snap solver
+// intentionally works in XY; projecting actual world vertices is necessary
+// for accurate node-to-node movement in Front, Side and ISO views.
+function findMoveNodeSnap() {
+    if (!osnapOn || !renderer || !camera || !mouse) return null;
+    const rect = renderer.domElement.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const cursorX = (mouse.x + 1) * 0.5 * rect.width;
+    const cursorY = (1 - mouse.y) * 0.5 * rect.height;
+    const aperture = OSNAP_APERTURE_PX;
+    let best = null;
+    camera.updateMatrixWorld(true);
+
+    const consider = (point, type = 'node') => {
+        if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) return;
+        const projected = point.clone().project(camera);
+        if (projected.z < -1 || projected.z > 1) return;
+        const sx = (projected.x + 1) * 0.5 * rect.width;
+        const sy = (1 - projected.y) * 0.5 * rect.height;
+        const distance = Math.hypot(sx - cursorX, sy - cursorY);
+        if (distance <= aperture && (!best || distance < best.distance)) {
+            best = { x: point.x, y: point.y, z: point.z, type, distance, screenX: sx, screenY: sy };
+        }
+    };
+
+    drawnObjects.forEach(object => {
+        if (!object || !object.visible || !object.geometry) return;
+        object.updateWorldMatrix(true, false);
+        const points = object.userData && object.userData.points;
+        if (Array.isArray(points)) {
+            points.forEach(value => {
+                if (!value) return;
+                const p = value.isVector3 ? value.clone() : new THREE.Vector3(value.x, value.y, value.z || 0);
+                consider(p);
+            });
+        }
+        const center = object.userData && object.userData.center;
+        if (center) {
+            const c = center.isVector3 ? center.clone() : new THREE.Vector3(center.x, center.y, center.z || 0);
+            consider(object.localToWorld(c), 'center');
+        }
+        const attribute = object.geometry.getAttribute && object.geometry.getAttribute('position');
+        if (!attribute) return;
+        const stride = Math.max(1, Math.ceil(attribute.count / 12000));
+        for (let i = 0; i < attribute.count; i += stride) {
+            const p = new THREE.Vector3().fromBufferAttribute(attribute, i);
+            consider(object.localToWorld(p));
+        }
+    });
+    return best;
 }
 
 // The point a drawing command should use: OSNAP > OTRACK > GRID/ORTHO > raw cursor.
@@ -331,6 +383,21 @@ function getDrawPoint() {
             hideSnapMarker();
             cancelOtrackAcquisition();
         }
+        return pt;
+    }
+
+    if (currentTool === 'move') {
+        const moveSnap = findMoveNodeSnap();
+        if (moveSnap) {
+            currentSnap = moveSnap;
+            showSnapMarker(moveSnap);
+            const snapped = new THREE.Vector3(moveSnap.x, moveSnap.y, moveSnap.z);
+            if (shouldApplyPointOrtho()) constrainPointToOrtho(snapped, basePoint);
+            return snapped;
+        }
+        hideSnapMarker();
+        cancelOtrackAcquisition();
+        if (shouldApplyPointOrtho()) constrainPointToOrtho(pt, basePoint);
         return pt;
     }
 
@@ -705,7 +772,7 @@ function showSnapMarker(s) {
         return;
     }
 
-    const sp = worldToScreen(s.x, s.y);
+    const sp = worldToScreen(s.x, s.y, s.z || 0);
     snapMarkerEl.style.left = sp.x + 'px';
     snapMarkerEl.style.top = sp.y + 'px';
     if (lastMarkerType !== s.type) {

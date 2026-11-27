@@ -421,23 +421,39 @@
                 if (!bounds || bounds.length <= 1e-9 || bounds.width <= 1e-9) return;
 
                 let length, width, height = 0, nosFactor = 1;
-                if (kind === 'circle') {
+                const isSolid = kind === 'solid';
+                const data = object.userData || {};
+                const isCylinder = isSolid && String(data.profileType || '').toLowerCase() === 'circle';
+
+                if (isCylinder) {
+                    // Cylinder: use the original circle radius, never its diameter.
+                    const radiusMm = Number(data.radius);
+                    const rawHeight = Number(data.height) || bounds.height;
+                    if (!Number.isFinite(radiusMm) || radiusMm <= 1e-9 ||
+                        !Number.isFinite(rawHeight) || rawHeight <= 1e-9) return;
+
+                    length = mround(radiusMm * mmToOutput, measurementStep);
+                    width = length;
+                    height = mround(rawHeight * mmToOutput, measurementStep);
+                    nosFactor = 3.142;
+                } else if (kind === 'circle') {
+                    // 2D circle: radius in Length and Width; area in Quantity.
                     const radiusMm = getCircleRadius(object);
                     if (!Number.isFinite(radiusMm) || radiusMm <= 1e-9) return;
                     length = mround(radiusMm * mmToOutput, measurementStep);
                     width = length;
                     nosFactor = 3.142;
                 } else {
+                    // Rectangles, closed polylines and non-circular solids.
                     length = mround(bounds.length * mmToOutput, measurementStep);
                     width = mround(bounds.width * mmToOutput, measurementStep);
-                }
 
-                const isSolid = kind === 'solid';
-                if (isSolid) {
-                    const rawHeight = Number((object.userData || {}).height) || bounds.height;
-                    if (!Number.isFinite(rawHeight) || rawHeight <= 1e-9) return;
-                    height = mround(rawHeight * mmToOutput, measurementStep);
-                    nosFactor = Number((object.userData || {}).baseAreaFactor) || 1;
+                    if (isSolid) {
+                        const rawHeight = Number(data.height) || bounds.height;
+                        if (!Number.isFinite(rawHeight) || rawHeight <= 1e-9) return;
+                        height = mround(rawHeight * mmToOutput, measurementStep);
+                        nosFactor = Number(data.baseAreaFactor) || 1;
+                    }
                 }
 
                 const layer = String(object.userData && object.userData.layer ? object.userData.layer : '0');
@@ -744,6 +760,51 @@
         return true;
     }
 
+    function auditCurrentDrawing() {
+        if (!global.CAD || typeof global.CAD.createContext !== 'function') {
+            return { ok: false, message: 'CAD is not ready.' };
+        }
+        const objects = global.CAD.createContext().getObjects() || [];
+        const supported = [];
+        const issues = [];
+        objects.forEach((object, index) => {
+            const kind = getEntityKind(object);
+            if (!kind) return;
+            const bounds = getBounds(object);
+            if (!bounds || bounds.length <= 1e-9 || bounds.width <= 1e-9) {
+                issues.push({ index, kind, issue: 'Missing or zero plan dimensions' });
+                return;
+            }
+            if (kind === 'solid') {
+                const height = Number(object.userData && object.userData.height) || bounds.height;
+                if (!Number.isFinite(height) || height <= 1e-9) {
+                    issues.push({ index, kind, issue: 'Missing or zero extrusion height' });
+                    return;
+                }
+            }
+            if (kind === 'circle' || (kind === 'solid' && String((object.userData || {}).profileType).toLowerCase() === 'circle')) {
+                const radius = Number(object.userData && object.userData.radius);
+                if (!Number.isFinite(radius) || radius <= 1e-9) {
+                    issues.push({ index, kind, issue: 'Missing or invalid circle radius' });
+                    return;
+                }
+            }
+            supported.push(object);
+        });
+        const unit = getCurrentDrawingUnit(global.CAD.createContext());
+        const rows = buildMeasurementRows(objects, 0.001, 0.01, unit, getOutputUnit(unit));
+        const quantityMultiple = getMroundMultiple(QUANTITY_MROUND_KEY, 0.01, LEGACY_QUANTITY_DECIMALS_KEY, 2);
+        const quantityIssues = rows.filter(row => {
+            const expected = row.nos * row.nosFactor * row.length * row.width * (row.height === '' ? 1 : row.height);
+            return !Number.isFinite(row.quantity) || Math.abs(row.quantity - mround(expected, quantityMultiple)) > 1e-8;
+        }).length;
+        return {
+            ok: issues.length === 0 && quantityIssues === 0,
+            totalObjects: objects.length, supportedObjects: supported.length,
+            measurementRows: rows.length, geometryIssues: issues, quantityIssues
+        };
+    }
+
     function readAutoUpdatePreference() {
         try {
             return global.localStorage.getItem(AUTO_UPDATE_STORAGE_KEY) === '1';
@@ -995,6 +1056,7 @@
         isAutoUpdateEnabled: () => autoUpdateEnabled,
         // Exposed for deterministic unit testing and diagnostics.
         buildMeasurementRows: buildMeasurementRows,
+        auditCurrentDrawing: auditCurrentDrawing,
         getEntityKind: getEntityKind,
         getCurrentDrawingUnit: getCurrentDrawingUnit,
         getOutputUnit: getOutputUnit,

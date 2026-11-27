@@ -22,24 +22,27 @@
 
     const SEGMENTS = 64;
 
+    function getDrawingAxes() {
+        const frame = global.SafarEdge3D &&
+            typeof global.SafarEdge3D.getDrawingFrame === 'function'
+            ? global.SafarEdge3D.getDrawingFrame() : null;
+        return frame || {
+            u: new THREE.Vector3(1, 0, 0),
+            v: new THREE.Vector3(0, 1, 0)
+        };
+    }
+
     function circlePoints(center, radius) {
-
+        const axes = getDrawingAxes();
         const points = [];
-
         for (let i = 0; i <= SEGMENTS; i++) {
-
-            const theta =
-                (i / SEGMENTS) * Math.PI * 2;
-
+            const theta = (i / SEGMENTS) * Math.PI * 2;
             points.push(
-                new THREE.Vector3(
-                    center.x + Math.cos(theta) * radius,
-                    center.y + Math.sin(theta) * radius,
-                    0
-                )
+                center.clone()
+                    .addScaledVector(axes.u, Math.cos(theta) * radius)
+                    .addScaledVector(axes.v, Math.sin(theta) * radius)
             );
         }
-
         return points;
     }
 

@@ -11,12 +11,12 @@
     let objects = [];
     let basePoint = null;
     let previewObjects = [];
-    let previewDelta = { x: 0, y: 0 };
+    let previewDelta = { x: 0, y: 0, z: 0 };
 
     function clearPreview(context) {
         Utils.disposePreview(context, previewObjects);
         previewObjects = [];
-        previewDelta = { x: 0, y: 0 };
+        previewDelta = { x: 0, y: 0, z: 0 };
     }
 
     function reset(context) {
@@ -34,7 +34,7 @@
             }
 
             context.setPrompt(
-                `MOVE — ${objects.length} object(s). Pick base point:`
+                `MOVE — ${objects.length} object(s). Pick base node/point (OSNAP works in all views):`
             );
         },
 
@@ -45,20 +45,21 @@
                 basePoint = point.clone();
                 previewObjects = Utils.cloneForPreview(context, objects);
                 context.updateState({ isDrawing: true, basePoint });
-                context.setPrompt('MOVE — Move the cyan preview to the destination and click to place. Original remains until confirmed.');
+                context.setPrompt('MOVE — Pick a destination node/point. OSNAP uses true 3D vertices in Top, Front, Side and ISO views. Original remains until confirmed.');
                 return;
             }
 
             const dx = point.x - basePoint.x;
             const dy = point.y - basePoint.y;
+            const dz = (point.z || 0) - (basePoint.z || 0);
 
-            if (Math.hypot(dx, dy) < 1e-8) {
+            if (Math.hypot(dx, dy, dz) < 1e-8) {
                 context.setPrompt('MOVE — Zero displacement. Pick another destination.');
                 return;
             }
 
             const before = context.captureObjects(objects);
-            context.translateObjects(objects, dx, dy);
+            context.translateObjects(objects, dx, dy, dz);
             context.recordModify(objects, before);
 
             context.notify(`Moved ${objects.length} object(s).`);
@@ -71,16 +72,18 @@
 
             const dx = point.x - basePoint.x;
             const dy = point.y - basePoint.y;
+            const dz = (point.z || 0) - (basePoint.z || 0);
 
             context.translateObjects(
                 previewObjects,
                 dx - previewDelta.x,
-                dy - previewDelta.y
+                dy - previewDelta.y,
+                dz - previewDelta.z
             );
 
-            previewDelta = { x: dx, y: dy };
+            previewDelta = { x: dx, y: dy, z: dz };
             context.setPrompt(
-                `MOVE — X: ${context.formatValue(dx)} | Y: ${context.formatValue(dy)} | Click to place`
+                `MOVE — X: ${context.formatValue(dx)} | Y: ${context.formatValue(dy)} | Z: ${context.formatValue(dz)} | Click to place`
             );
         },
 

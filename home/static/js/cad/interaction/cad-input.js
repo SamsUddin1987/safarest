@@ -108,20 +108,27 @@ function processDynamicInputValue(val) {
 // ==========================================
 function getCursorWorldCoordinates() {
 
-    // Convert mouse position into a camera ray.
+    // Use the drafting plane belonging to the active standard view.
+    // This prevents Front/Back/Left/Right/ISO cursor rays from being
+    // intersected against the obsolete fixed Z=0 plane.
     raycaster.setFromCamera(mouse, camera);
 
-    // Find intersection with the infinite XY drawing plane.
+    const frame = window.SafarEdge3D &&
+        typeof window.SafarEdge3D.getDrawingFrame === 'function'
+        ? window.SafarEdge3D.getDrawingFrame()
+        : null;
+    const activePlane = frame && frame.plane ? frame.plane : plane;
+
     const intersection = raycaster.ray.intersectPlane(
-        plane,
+        activePlane,
         new THREE.Vector3()
     );
 
-    // Return world coordinates.
-    if (intersection) {
-        return intersection;
-    }
+    if (intersection) return intersection;
 
+    // Do not silently return the world origin when a ray is parallel to
+    // the active plane; use the camera target as a safe visible fallback.
+    if (frame && frame.origin) return frame.origin.clone();
     return new THREE.Vector3(0, 0, 0);
 }
 

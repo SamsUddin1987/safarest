@@ -488,7 +488,11 @@
         // explicitly opt out with colorMode:'Explicit' to preserve DXF colour.
         const colorMode = entity.userData.colorMode || (entity.userData.type === 'dimension' ? 'DimensionStyle' : 'ByLayer');
         if (colorMode === 'ByLayer' && entity.userData.type !== 'dimension') {
-            const hex = new THREE.Color(layer.color || '#ffffff').getHex();
+            const materialApi = global.SafarEdge3D;
+            const presetInfo = materialApi && typeof materialApi.getMaterialPresets === 'function'
+                ? materialApi.getMaterialPresets().find(item => item.name === layer.materialPreset) : null;
+            const layerColor = presetInfo ? presetInfo.color : (layer.color || '#ffffff');
+            const hex = new THREE.Color(layerColor).getHex();
             entity.userData.originalColor = hex;
             const applyMaterial = (node) => {
                 if (!node.material) return;
@@ -545,6 +549,9 @@
             if (typeof entity.traverse === 'function') entity.traverse(applyMaterial);
             else applyMaterial(entity);
         }
+        if (layer.materialPreset && entity.userData.type === 'solid' && global.SafarEdge3D && typeof global.SafarEdge3D.applyLayerMaterial === 'function') {
+            global.SafarEdge3D.applyLayerMaterial(entity, layer.materialPreset);
+        }
     }
     function applyLayerStates() {
         try { CAD.createContext().getObjects().forEach(applyLayerState); } catch (_) {}
@@ -558,20 +565,26 @@
         const toolbar=document.createElement('div');toolbar.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px';ui.body.append(toolbar);
         const tableWrap=document.createElement('div');tableWrap.className='safar-table-wrap';ui.body.append(tableWrap);
         const table=document.createElement('table');tableWrap.append(table);
-        const head=document.createElement('thead');head.innerHTML='<tr><th>Current</th><th>Layer</th><th>On</th><th>Freeze</th><th>Lock</th><th>Colour</th><th>Linetype</th><th>Lineweight</th><th>Plot</th></tr>';table.append(head);
+        const head=document.createElement('thead');head.innerHTML='<tr><th>Current</th><th>Layer</th><th>On</th><th>Freeze</th><th>Lock</th><th>Material</th><th>Linetype</th><th>Lineweight</th><th>Plot</th></tr>';table.append(head);
         const body=document.createElement('tbody');table.append(body);
         let selected=settings.currentLayer||'0';
         function redraw(){body.innerHTML='';Object.keys(settings.layers).forEach(name=>{const l=settings.layers[name];const tr=document.createElement('tr');const td=(node)=>{const c=document.createElement('td');c.append(node);tr.append(c);return c;};
             const radio=document.createElement('input');radio.type='radio';radio.name='safar-current-layer';radio.checked=selected===name;radio.onchange=()=>{selected=name;};td(radio);
             const nm=document.createElement('strong');nm.textContent=name;td(nm);
             [['visible','On'],['frozen','Freeze'],['locked','Lock'],['plot','Plot']].forEach(([key])=>{const cb=document.createElement('input');cb.type='checkbox';cb.checked=l[key]!==false;cb.onchange=()=>{l[key]=cb.checked;save();markProjectDirty();applyLayerStates();};td(cb);});
-            const color=document.createElement('input');color.type='color';color.className='safar-layer-control';color.value=l.color||'#ffffff';color.onchange=()=>{l.color=color.value;save();markProjectDirty();applyLayerStates();refreshAll();};td(color);
+            const material=document.createElement('select');material.className='safar-layer-control';
+            const materialApi=global.SafarEdge3D;
+            const presets=materialApi&&typeof materialApi.getMaterialPresets==='function'?materialApi.getMaterialPresets():[];
+            const none=document.createElement('option');none.value='';none.textContent='No material';material.append(none);
+            presets.forEach(p=>{const option=document.createElement('option');option.value=p.name;option.textContent=p.name;material.append(option);});
+            material.value=l.materialPreset||'';
+            material.onchange=()=>{l.materialPreset=material.value||'';const chosen=presets.find(p=>p.name===l.materialPreset);if(chosen)l.color=chosen.color;save();markProjectDirty();applyLayerStates();refreshAll();};td(material);
             const lt=document.createElement('select');lt.className='safar-layer-control';['Continuous','Dashed','Hidden','Center','Dotted'].forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;lt.append(o);});lt.value=l.linetype||'Continuous';lt.onchange=()=>{l.linetype=lt.value;save();markProjectDirty();applyLayerStates();refreshAll();};td(lt);
             const lw=document.createElement('select');lw.className='safar-layer-control';['Default','0.00','0.05','0.09','0.13','0.15','0.18','0.20','0.25','0.30','0.35','0.40','0.50','0.53','0.60','0.70','0.80','1.00','1.06','1.20','1.40','1.58','2.00','2.11'].forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v==='Default'?v:v+' mm';lw.append(o);});lw.value=String(l.lineweight||'Default');lw.onchange=()=>{l.lineweight=lw.value==='Default'?0:Number(lw.value);save();markProjectDirty();applyLayerStates();refreshAll();};td(lw);
             body.append(tr);
         });}
         const toolBtn=(text,fn,primary=false)=>{const b=document.createElement('button');b.type='button';b.className='safar-btn'+(primary?' primary':'');b.textContent=text;b.onclick=fn;toolbar.append(b);};
-        toolBtn('New layer',()=>{const n=global.prompt('New layer name:','LAYER-'+(Object.keys(settings.layers).length));if(!n||settings.layers[n])return;settings.layers[n]={name:n,color:'#ffffff',lineweight:0.25,linetype:'Continuous',visible:true,frozen:false,locked:false,plot:true};selected=n;redraw();save();markProjectDirty();});
+        toolBtn('New layer',()=>{const n=global.prompt('New layer name:','LAYER-'+(Object.keys(settings.layers).length));if(!n||settings.layers[n])return;settings.layers[n]={name:n,color:'#ffffff',materialPreset:'',lineweight:0.25,linetype:'Continuous',visible:true,frozen:false,locked:false,plot:true};selected=n;redraw();save();markProjectDirty();});
         toolBtn('Set current',()=>{settings.currentLayer=selected;save();markProjectDirty();applyLayerStates();if(global.notify)global.notify(`Current layer: ${selected}`);redraw();});
         toolBtn('Rename',()=>{if(selected==='0')return;const oldName=selected;const n=global.prompt('Rename layer:',oldName);if(!n||settings.layers[n])return;settings.layers[n]=Object.assign({},settings.layers[oldName],{name:n});delete settings.layers[oldName];if(settings.currentLayer===oldName)settings.currentLayer=n;try{CAD.createContext().getObjects().forEach(o=>{if(o.userData&&o.userData.layer===oldName)o.userData.layer=n;});}catch(_){}selected=n;save();markProjectDirty();redraw();applyLayerStates();});
         toolBtn('Delete',()=>{if(selected==='0'){global.alert('Layer 0 cannot be deleted.');return;}if(!global.confirm(`Delete layer ${selected}?`))return;const oldName=selected;delete settings.layers[oldName];try{CAD.createContext().getObjects().forEach(o=>{if(o.userData&&o.userData.layer===oldName)o.userData.layer='0';});}catch(_){}if(settings.currentLayer===oldName)settings.currentLayer='0';selected=settings.currentLayer;save();markProjectDirty();redraw();applyLayerStates();},false);

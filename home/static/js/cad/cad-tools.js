@@ -113,37 +113,52 @@ function setTool(toolName, toolOptions = null) {
 }
 
 // Shared geometry translation remains here for selection dragging and history.
-function translateCadObjects(objects, dx, dy) {
+function translateCadObjects(objects, dx, dy, dz = 0) {
     (objects || []).forEach(obj => {
         if (obj.geometry) {
-            obj.geometry.translate(dx, dy, 0);
+            obj.geometry.translate(dx, dy, dz);
             obj.geometry.computeBoundingSphere();
+            obj.geometry.computeBoundingBox();
         }
         if (obj.traverse) {
             obj.traverse(child => {
                 if (child !== obj && child.geometry) {
-                    child.geometry.translate(dx, dy, 0);
+                    child.geometry.translate(dx, dy, dz);
                     child.geometry.computeBoundingSphere();
+                    child.geometry.computeBoundingBox();
                 }
                 if (child !== obj && child.isSprite) {
-                    child.position.x += dx; child.position.y += dy;
+                    child.position.x += dx; child.position.y += dy; child.position.z += dz;
                 }
             });
         }
         if (obj.userData && obj.userData.center) {
-            obj.userData.center.x += dx; obj.userData.center.y += dy;
+            obj.userData.center.x += dx;
+            obj.userData.center.y += dy;
+            obj.userData.center.z = (obj.userData.center.z || 0) + dz;
         }
         if (obj.userData && Array.isArray(obj.userData.points)) {
-            obj.userData.points.forEach(point => { point.x += dx; point.y += dy; });
+            obj.userData.points.forEach(point => {
+                point.x += dx; point.y += dy; point.z = (point.z || 0) + dz;
+            });
         }
         if (obj.userData && obj.userData.dimensionData) {
             const d = obj.userData.dimensionData;
             ['p1','p2','location','vertex','ray1','ray2','arcPoint','center','point'].forEach(key => {
                 const value = d[key];
-                if (Array.isArray(value) && value.length >= 2) { value[0] += dx; value[1] += dy; }
+                if (Array.isArray(value) && value.length >= 2) {
+                    value[0] += dx; value[1] += dy;
+                    if (value.length >= 3) value[2] += dz;
+                } else if (value && typeof value === 'object') {
+                    value.x = (value.x || 0) + dx;
+                    value.y = (value.y || 0) + dy;
+                    value.z = (value.z || 0) + dz;
+                }
             });
         }
-        if (obj.isSprite) { obj.position.x += dx; obj.position.y += dy; }
+        if (obj.isSprite) {
+            obj.position.x += dx; obj.position.y += dy; obj.position.z += dz;
+        }
     });
 }
 

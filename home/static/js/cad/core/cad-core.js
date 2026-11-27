@@ -150,9 +150,20 @@ function initCADViewer() {
     camera.lookAt(0, 0, 0);
 
     // 1.3 WebGL Renderer
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
     renderer.setSize(container.clientWidth, container.clientHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
+    // Keep GPU cost predictable on laptops and integrated graphics.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+    if ('outputColorSpace' in renderer && THREE.SRGBColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace;
+    else if ('outputEncoding' in renderer && THREE.sRGBEncoding !== undefined) renderer.outputEncoding = THREE.sRGBEncoding;
+    if ('toneMapping' in renderer && THREE.ACESFilmicToneMapping !== undefined) {
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+    }
+    if (renderer.shadowMap) {
+        renderer.shadowMap.enabled = true;
+        if (THREE.PCFSoftShadowMap !== undefined) renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    }
     container.appendChild(renderer.domElement);
 
     // 1.4 Raycaster & Interaction Plane
@@ -225,8 +236,21 @@ function getSelectionGripDescriptors(object) {
     object.updateMatrixWorld(true);
     const data = object.userData || {};
     const descriptors = [];
-    // Dimensions are editable through DIMEDIT/DIMSTYLE rather than vertex grips.
-    if (data.type === 'dimension' || data.type === 'solid') return descriptors;
+    // Dimensions are edited through DIMEDIT/DIMSTYLE. 3D solids receive a
+    // camera-facing centre grip so they can be repositioned in ISO as well.
+    if (data.type === 'dimension') return descriptors;
+    if (data.type === 'solid') {
+        const box = new THREE.Box3().setFromObject(object);
+        if (!box.isEmpty()) {
+            descriptors.push({
+                object,
+                kind: 'solid-move',
+                index: 0,
+                point: box.getCenter(new THREE.Vector3())
+            });
+        }
+        return descriptors;
+    }
 
     // Circle grips follow conventional CAD behaviour:
     // - centre grip moves the complete circle;
@@ -350,7 +374,10 @@ function updateSelectionGrips() {
         const grip = selectionGripMeshes[index];
         const point = descriptor.point;
         grip.userData.cadGrip = descriptor;
-        grip.position.set(point.x, point.y, Math.max(point.z || 0, 0) + 8);
+        // Face each grip toward the active camera. A fixed XY quad becomes
+        // edge-on/foreshortened in ISO, making nodes difficult to see and pick.
+        grip.position.copy(point);
+        grip.quaternion.copy(camera.quaternion);
         grip.scale.set(gripSize, gripSize, 1);
         grip.visible = true;
     });
@@ -369,6 +396,14 @@ function applySelectionGripPoint(drag, worldPoint) {
     if (object.geometry) object.geometry.dispose();
     object.geometry = drag.originalGeometry.clone();
     object.userData = JSON.parse(JSON.stringify(drag.originalUserData || {}));
+
+    if (drag.descriptor.kind === 'solid-move') {
+        const delta = worldPoint.clone().sub(drag.startPoint);
+        object.position.copy(drag.originalPosition || new THREE.Vector3()).add(delta);
+        object.updateMatrixWorld(true);
+        updateSelectionGrips();
+        return;
+    }
 
     object.updateMatrixWorld(true);
     const inverse = object.matrixWorld.clone().invert();
@@ -783,7 +818,7 @@ function createCADCommandContext() {
         },
         getWorldBounds(object) { return getWorldBounds(object); },
         cloneObject(object) { return cloneCadObject(object); },
-        translateObjects(objects, dx, dy) { return translateCadObjects(objects, dx, dy); },
+        translateObjects(objects, dx, dy, dz = 0) { return translateCadObjects(objects, dx, dy, dz); },
         applyMatrix(objects, matrix) {
             (objects || []).forEach(object => {
                 const applyChild = child => {
@@ -899,8 +934,13 @@ function createCADCommandContext() {
                 }
             });
             updateSelectionGrips();
+            if (window.SafarEdgeRefreshSidePanel) window.SafarEdgeRefreshSidePanel();
         },
-        clearSelection() { return clearSelection(); },
+        clearSelection() {
+            const result = clearSelection();
+            if (window.SafarEdgeRefreshSidePanel) window.SafarEdgeRefreshSidePanel();
+            return result;
+        },
         getThree() { return THREE; },
         getPendingCommand() { return pendingCommand; },
         setPendingCommand(value) { pendingCommand = value; },

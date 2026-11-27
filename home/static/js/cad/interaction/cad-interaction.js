@@ -372,12 +372,14 @@ function clearSelection() {
     selectedObjects.forEach(obj => setCadObjectSelectedState(obj, false));
     selectedObjects = [];
     if (typeof updateSelectionGrips === 'function') updateSelectionGrips();
+    if (window.SafarEdgeRefreshSidePanel) window.SafarEdgeRefreshSidePanel();
 }
 
 function removeSelectedObject(obj) {
     if (!obj || !selectedObjects.includes(obj)) return false;
     selectedObjects = selectedObjects.filter(item => item !== obj);
     setCadObjectSelectedState(obj, false);
+    if (window.SafarEdgeRefreshSidePanel) window.SafarEdgeRefreshSidePanel();
     return true;
 }
 
@@ -385,6 +387,7 @@ function addSelectedObject(obj) {
     if (!obj || selectedObjects.includes(obj)) return false;
     selectedObjects.push(obj);
     setCadObjectSelectedState(obj, true);
+    if (window.SafarEdgeRefreshSidePanel) window.SafarEdgeRefreshSidePanel();
     return true;
 }
 
