@@ -100,15 +100,39 @@
         fillButton.title = 'Toggle 3D solid surface colours. Edges remain visible when fill is OFF.';
     }
 
-    function ensureSolidEdges(object) {
-        if (!object || !object.geometry || !object.children) return null;
-        const position = object.geometry.getAttribute('position');
-        const positionVersion = position ? position.version : 0;
-        let edgeLines = object.children.find(child =>
-            child.userData && child.userData.isCadSolidEdges
+    function getSolidLayerColor(object) {
+        const layerName = String(
+            (object && object.userData && object.userData.layer) || '0'
         );
 
+        const settings = CAD.Dimension &&
+            typeof CAD.Dimension.getSettings === 'function'
+            ? (CAD.Dimension.getSettings() || {})
+            : {};
+
+        const layer = (settings.layers || {})[layerName];
+
+        return layer && layer.color ? layer.color : '#ffffff';
+    }
+
+    function ensureSolidEdges(object) {
+        if (!object || !object.geometry || !object.children) return null;
+
+        const position = object.geometry.getAttribute('position');
+        if (!position || !position.count) return null;
+
+        const positionVersion = position.version || 0;
+        let edgeLines = object.children.find(child =>
+            child && child.userData && child.userData.isCadSolidEdges
+        );
+
+        const edgePosition = edgeLines && edgeLines.geometry &&
+            edgeLines.geometry.getAttribute &&
+            edgeLines.geometry.getAttribute('position');
+        const edgeGeometryInvalid = !edgePosition || !edgePosition.count;
+
         const needsGeometry = !edgeLines ||
+            edgeGeometryInvalid ||
             edgeLines.userData.sourceGeometryId !== object.geometry.uuid ||
             edgeLines.userData.sourcePositionVersion !== positionVersion;
 
@@ -116,7 +140,7 @@
             edgeLines = new THREE.LineSegments(
                 new THREE.EdgesGeometry(object.geometry, 1.5),
                 new THREE.LineBasicMaterial({
-                    color: 0xffd54a,
+                    color: getSolidLayerColor(object),
                     depthTest: false,
                     depthWrite: false,
                     transparent: false,
@@ -132,14 +156,21 @@
             edgeLines.geometry = new THREE.EdgesGeometry(object.geometry, 1.5);
         }
 
+        const rebuiltPosition = edgeLines.geometry &&
+            edgeLines.geometry.getAttribute('position');
+        if (!rebuiltPosition || !rebuiltPosition.count) {
+            edgeLines.visible = false;
+            return edgeLines;
+        }
+
         edgeLines.userData.sourceGeometryId = object.geometry.uuid;
         edgeLines.userData.sourcePositionVersion = positionVersion;
-        edgeLines.visible = true; // Skeleton is independent of the surface FILL toggle.
+        edgeLines.visible = !solidFillEnabled;
         edgeLines.renderOrder = 1000;
         edgeLines.frustumCulled = false;
         if (edgeLines.material) {
             edgeLines.material.visible = true;
-            edgeLines.material.color.setHex(0xffd54a);
+            edgeLines.material.color.set(getSolidLayerColor(object));
             edgeLines.material.depthTest = false;
             edgeLines.material.depthWrite = false;
             edgeLines.material.transparent = false;
@@ -149,9 +180,47 @@
         return edgeLines;
     }
 
+    // Edges are a render helper, not authoritative project geometry. Rebuild
+    // them from each restored solid's actual mesh instead of trusting a
+    // serialized EdgesGeometry child, whose cached BufferGeometry can be stale
+    // or incomplete after ObjectLoader restores a project.
+    function rebuildSolidEdgesAfterRestore() {
+        const objects = context().getObjects();
+        objects.forEach(object => {
+            if (!object || !object.userData ||
+                String(object.userData.type || '').toLowerCase() !== 'solid' ||
+                !object.geometry || !object.children) return;
+
+            const oldEdges = object.children.filter(child =>
+                child && (
+                    (child.userData && child.userData.isCadSolidEdges) ||
+                    child.name === 'SAFAR_EDGE_SOLID_OUTLINES'
+                )
+            );
+
+            oldEdges.forEach(edge => {
+                object.remove(edge);
+                if (edge.geometry && typeof edge.geometry.dispose === 'function') {
+                    edge.geometry.dispose();
+                }
+                const materials = Array.isArray(edge.material)
+                    ? edge.material
+                    : (edge.material ? [edge.material] : []);
+                materials.forEach(material => {
+                    if (material && typeof material.dispose === 'function') {
+                        material.dispose();
+                    }
+                });
+            });
+
+            ensureSolidEdges(object);
+        });
+    }
+
     function applySolidDisplay() {
         context().getObjects().forEach(object => {
-            if (!object || !object.userData || object.userData.type !== 'solid') return;
+            if (!object || !object.userData ||
+                String(object.userData.type || '').toLowerCase() !== 'solid') return;
             object.visible = true;
             const materials = Array.isArray(object.material)
                 ? object.material
@@ -164,7 +233,7 @@
                 material.needsUpdate = true;
             });
             const edgeLines = ensureSolidEdges(object);
-            if (edgeLines) edgeLines.visible = true; // Skeleton is independent of the surface FILL toggle.
+            if (edgeLines) edgeLines.visible = !solidFillEnabled;
         });
         updateFillButton();
     }
@@ -1105,7 +1174,11 @@
             const edgeLines = new THREE.LineSegments(
                 new THREE.EdgesGeometry(geometry, 1.5),
                 new THREE.LineBasicMaterial({
-                    color: 0xffd54a, depthTest: false, depthWrite: false,
+                    color: (CAD.Dimension.getSettings().layers[
+                        String((profile.userData && profile.userData.layer) || '0')
+                    ] || {}).color || '#ffffff',
+                    depthTest: false,
+                    depthWrite: false,
                     transparent: false, toneMapped: false
                 })
             );
@@ -1115,7 +1188,7 @@
             edgeLines.userData.sourcePositionVersion = geometry.getAttribute('position')?.version || 0;
             edgeLines.renderOrder = 1000;
             edgeLines.frustumCulled = false;
-            edgeLines.visible = true; // Skeleton is independent of the surface FILL toggle.
+            edgeLines.visible = !solidFillEnabled;
             solid.add(edgeLines);
             const factor = result.area / Math.max(result.length * result.width, 1e-12);
             const profileType = String(
@@ -1350,6 +1423,7 @@
         if (cam) cam.up.set(0, 0, 1);
         createEnvironmentControls();
         createQuickLayerSelector();
+        rebuildSolidEdgesAfterRestore();
         applySolidDisplay();
 
         // Restored drawings can finish loading after the viewport is first laid
@@ -1365,6 +1439,7 @@
                 const bounds = getVisibleModelBounds();
                 if (!bounds || bounds.isEmpty()) return;
                 fitModel();
+                rebuildSolidEdgesAfterRestore();
                 applySolidDisplay();
                 refreshDimensionPanel();
             }, 250);
@@ -1622,6 +1697,7 @@
         setViewVisible(true);
         register3DEditCommands();
         applySavedMaterialPresets();
+        rebuildSolidEdgesAfterRestore();
         applySolidDisplay();
         updateButton();
     }
