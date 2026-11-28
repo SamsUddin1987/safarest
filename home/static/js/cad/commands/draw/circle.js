@@ -61,10 +61,13 @@
 
         const circle = new THREE.Line(geometry, material);
 
+        const frame = global.SafarEdge3D.getDrawingFrame();
+
         circle.userData = {
             type: 'circle',
             center: center.clone(),
             radius: radius,
+            workPlane: frame.name || 'XY',
             originalColor: 0xffff00
         };
 

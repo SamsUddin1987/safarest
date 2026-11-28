@@ -11,7 +11,7 @@
     let sourceObjects = [];
     let basePoint = null;
     let previewObjects = [];
-    let previewDelta = { x: 0, y: 0 };
+    let previewDelta = { x: 0, y: 0, z: 0 };
 
     function cloneCadObject(source) {
         const copy = source.clone(true);
@@ -33,13 +33,14 @@
     function clearPreview(context) {
         Utils.disposePreview(context, previewObjects);
         previewObjects = [];
-        previewDelta = { x: 0, y: 0 };
+        previewDelta = { x: 0, y: 0, z: 0 };
     }
 
     function reset(context) {
         clearPreview(context);
         sourceObjects = [];
         basePoint = null;
+        window.SafarEdgeCommandGripObjects = null;
     }
 
     function copySelectedObjects() {
@@ -102,6 +103,16 @@
                 return;
             }
 
+            // Refresh the same MOVE/COPY base-point grips.
+            // These are pick-only markers, not stretching grips.
+            if (typeof updateSelectionGrips === 'function') {
+                updateSelectionGrips();
+            }
+
+            // COPY displays the exact same pick-only base-point markers as
+            // MOVE, using its source objects rather than editable stretch grips.
+            window.SafarEdgeCommandGripObjects = sourceObjects.slice();
+
             if (options && options.basePoint) {
                 basePoint = options.basePoint.clone();
                 previewObjects = Utils.cloneForPreview(context, sourceObjects);
@@ -127,8 +138,9 @@
 
             const dx = point.x - basePoint.x;
             const dy = point.y - basePoint.y;
+            const dz = (point.z || 0) - (basePoint.z || 0);
 
-            if (Math.hypot(dx, dy) < 1e-8) {
+            if (Math.hypot(dx, dy, dz) < 1e-8) {
                 context.setPrompt('COPY — Zero displacement. Pick another destination.');
                 return;
             }
@@ -137,7 +149,7 @@
 
             const copies = sourceObjects.map(source => {
                 const copy = cloneCadObject(source);
-                context.translateObjects([copy], dx, dy);
+                context.translateObjects([copy], dx, dy, dz);
                 context.addEntity(copy, false);
                 return copy;
             });
@@ -150,8 +162,8 @@
             );
 
             previewObjects = Utils.cloneForPreview(context, sourceObjects);
-            context.translateObjects(previewObjects, dx, dy);
-            previewDelta = { x: dx, y: dy };
+            context.translateObjects(previewObjects, dx, dy, dz);
+            previewDelta = { x: dx, y: dy, z: dz };
         },
 
         onPreview(point, context) {
@@ -159,16 +171,18 @@
 
             const dx = point.x - basePoint.x;
             const dy = point.y - basePoint.y;
+            const dz = (point.z || 0) - (basePoint.z || 0);
 
             context.translateObjects(
                 previewObjects,
                 dx - previewDelta.x,
-                dy - previewDelta.y
+                dy - previewDelta.y,
+                dz - previewDelta.z
             );
 
-            previewDelta = { x: dx, y: dy };
+            previewDelta = { x: dx, y: dy, z: dz };
             context.setPrompt(
-                `COPY — X: ${context.formatValue(dx)} | Y: ${context.formatValue(dy)} | Click to place`
+                `COPY — X: ${context.formatValue(dx)} | Y: ${context.formatValue(dy)} | Z: ${context.formatValue(dz)} | Click to place`
             );
         },
 

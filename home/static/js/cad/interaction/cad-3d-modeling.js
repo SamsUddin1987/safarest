@@ -12,6 +12,7 @@
     // SAFAR EDGE now runs as one continuous 3D model workspace.
     let mode = '3D';
     let activeStandardView = 'top';
+    let activeWorkPlane = 'XY';
     let orbitEnabled = false;
     let viewCube = null;
     let sidePanel = null;
@@ -19,6 +20,24 @@
     let layerQuickSelect = null;
     let extrudeHeightInput = null;
     let extrudeHeightMm = 3000;
+    // EXTRUDE direction configuration
+    let extrudeDirectionMode = 'NORMAL';
+    let extrudeSideMode = 'ONE_SIDE';
+    let extrudeTaperAngle = 0;
+    let extrudeTerminationMode = 'DISTANCE';
+    let extrudeTerminationSelect = null;
+    let extrudeSideSelect = null;
+    let extrudeTaperInput = null;
+    let extrudeCustomVector = new THREE.Vector3(0, 0, 1);
+    // Phase 4: transient extrusion preview and selectable viewport direction handles.
+    let extrusionPreviewGroup = null;
+    let extrusionGizmoGroup = null;
+    let extrusionPreviewActive = false;
+    let extrusionPreviewHeight = 3000;
+    let extrusionGizmoHandles = [];
+
+    let extrudeDirectionSelect = null;
+    let extrudeVectorInputs = {};
     const viewButtons = Object.create(null);
     let saved2DView = null; // retained only for backwards-compatible project files
     let modelExtent = 1000;
@@ -180,6 +199,65 @@
         return edgeLines;
     }
 
+    function normalizeSolidExtrusionMetadata(object) {
+        if (
+            !object ||
+            !object.userData ||
+            String(object.userData.type || '').toLowerCase() !== 'solid'
+        ) {
+            return false;
+        }
+
+        const data = object.userData;
+
+        let direction = Array.isArray(data.extrusionDirection) &&
+            data.extrusionDirection.length === 3
+            ? new THREE.Vector3(
+                Number(data.extrusionDirection[0]),
+                Number(data.extrusionDirection[1]),
+                Number(data.extrusionDirection[2])
+            )
+            : null;
+
+        if (
+            !direction ||
+            !Number.isFinite(direction.x) ||
+            !Number.isFinite(direction.y) ||
+            !Number.isFinite(direction.z) ||
+            direction.lengthSq() < 1e-12
+        ) {
+            // Backward compatibility for solids created before Phase 2B.
+            direction = new THREE.Vector3(0, 0, 1);
+        }
+
+        direction.normalize();
+
+        let origin = Array.isArray(data.extrusionOrigin) &&
+            data.extrusionOrigin.length === 3
+            ? data.extrusionOrigin.map(Number)
+            : [0, 0, 0];
+
+        if (!origin.every(Number.isFinite)) {
+            origin = [0, 0, 0];
+        }
+
+        const height = Number(data.extrusionHeight || data.height);
+
+        data.extrusionMetadataVersion = 1;
+        data.extrusionDirection = direction.toArray();
+        data.extrusionOrigin = origin;
+        data.extrusionHeight =
+            Number.isFinite(height) && height > 0
+                ? height
+                : (Number(data.height) > 0 ? Number(data.height) : 0);
+
+        if (!['XY', 'XZ', 'YZ'].includes(data.workPlane)) {
+            data.workPlane = 'XY';
+        }
+
+        return true;
+    }
+
     // Edges are a render helper, not authoritative project geometry. Rebuild
     // them from each restored solid's actual mesh instead of trusting a
     // serialized EdgesGeometry child, whose cached BufferGeometry can be stale
@@ -190,6 +268,8 @@
             if (!object || !object.userData ||
                 String(object.userData.type || '').toLowerCase() !== 'solid' ||
                 !object.geometry || !object.children) return;
+
+            normalizeSolidExtrusionMetadata(object);
 
             const oldEdges = object.children.filter(child =>
                 child && (
@@ -390,7 +470,7 @@
             sidePanel = global.document.createElement('div');
             sidePanel.id = 'safar-cad-side-panel';
             sidePanel.setAttribute('aria-label', 'CAD Side Panel');
-            sidePanel.style.cssText = 'position:absolute;right:6px;top:6px;z-index:1200;display:flex;flex-direction:column;align-items:stretch;gap:5px;width:190px;max-width:calc(100% - 12px);max-height:calc(100% - 12px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;box-sizing:border-box;padding:4px;background:rgba(10,16,24,.22);border:1px solid rgba(110,130,150,.35);border-radius:7px;backdrop-filter:blur(5px);font:10px Segoe UI,Arial,sans-serif;pointer-events:auto;scrollbar-width:thin;';
+            sidePanel.style.cssText = 'position:absolute;right:6px;top:6px;z-index:1200;display:flex;flex-direction:column;align-items:stretch;gap:5px;width:178px;max-width:calc(100% - 12px);max-height:calc(100% - 12px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;box-sizing:border-box;padding:3px;background:rgba(10,16,24,.22);border:1px solid rgba(110,130,150,.35);border-radius:7px;backdrop-filter:blur(5px);font:9px Segoe UI,Arial,sans-serif;pointer-events:auto;scrollbar-width:thin;';
             const panelTitle = global.document.createElement('div');
             panelTitle.textContent = 'CAD SIDE PANEL';
             panelTitle.style.cssText = 'flex:none;padding:5px 7px;text-align:center;background:rgba(20,29,40,.97);border:1px solid #435367;border-radius:5px;color:#dce6f2;font-size:9px;font-weight:700;letter-spacing:.12em;box-shadow:0 2px 8px rgba(0,0,0,.22);pointer-events:auto;';
@@ -406,7 +486,7 @@
         if (!panel) return null;
         viewCube = global.document.createElement('div');
         viewCube.id = 'safar-cad-side-panel-navigation';
-        viewCube.style.cssText = 'position:relative;flex:none;display:flex;flex-direction:column;gap:4px;padding:5px;background:rgba(20,29,40,.97);border:1px solid #435367;border-radius:5px;box-shadow:0 3px 12px rgba(0,0,0,.28);font:11px Segoe UI,Arial,sans-serif;pointer-events:auto;';
+        viewCube.style.cssText = 'position:sticky;top:0;z-index:5;flex:none;display:flex;flex-direction:column;gap:3px;padding:4px;background:rgba(20,29,40,.98);border:1px solid #435367;border-radius:5px;box-shadow:0 3px 12px rgba(0,0,0,.28);font:10px Segoe UI,Arial,sans-serif;pointer-events:auto;';
         const title = global.document.createElement('div');
         title.textContent = 'VIEW NAVIGATION';
         title.style.cssText = 'font-size:9px;font-weight:700;letter-spacing:.1em;color:#9fb2c8;text-align:left;padding:0 1px 3px;';
@@ -515,18 +595,167 @@
         return true;
     }
 
+    function createWorkPlaneControl(panel) {
+        if (!panel) return null;
+
+        let section = global.document.getElementById(
+            'safar-cad-work-plane'
+        );
+
+        if (section) return section;
+
+        section = global.document.createElement('div');
+        section.id = 'safar-cad-work-plane';
+
+        section.style.cssText =
+            'position:relative;flex:none;display:flex;' +
+            'flex-direction:column;gap:4px;padding:5px;' +
+            'background:rgba(20,29,40,.97);' +
+            'border:1px solid #435367;border-radius:5px;' +
+            'font:11px Segoe UI,Arial,sans-serif;' +
+            'pointer-events:auto;';
+
+        const label = global.document.createElement('label');
+        label.textContent = 'WORK PLANE';
+        label.style.cssText =
+            'font-size:9px;font-weight:700;letter-spacing:.1em;' +
+            'color:#9fb2c8;padding:0 1px 2px;';
+
+        const select = global.document.createElement('select');
+        select.id = 'safar-work-plane-select';
+
+        select.style.cssText =
+            'box-sizing:border-box;width:100%;min-width:0;' +
+            'background:#263545;color:#edf3f9;' +
+            'border:1px solid #50647a;border-radius:3px;' +
+            'padding:6px 5px;font:11px Segoe UI,Arial,sans-serif;';
+
+        [
+            ['XY', 'XY — Horizontal'],
+            ['XZ', 'XZ — Front / Elevation'],
+            ['YZ', 'YZ — Side']
+        ].forEach(([value, text]) => {
+            const option = global.document.createElement('option');
+            option.value = value;
+            option.textContent = text;
+            select.appendChild(option);
+        });
+
+        select.value = activeWorkPlane;
+
+        select.addEventListener('mousedown', event =>
+            event.stopPropagation()
+        );
+
+        select.addEventListener('click', event =>
+            event.stopPropagation()
+        );
+
+        select.addEventListener('change', () => {
+            const views = {
+                XY: 'top',
+                XZ: 'front',
+                YZ: 'left'
+            };
+
+            const view = views[select.value];
+            if (view) setStandardView(view);
+        });
+
+        section.append(label, select);
+        panel.appendChild(section);
+
+        return section;
+    }
+
+    function compactSidePanelSection(panel, elementId, heading) {
+        if (!panel) return null;
+        const element = global.document.getElementById(elementId);
+        if (!element) return null;
+        if (element.parentElement && element.parentElement.tagName === 'DETAILS') return element.parentElement;
+        const details = global.document.createElement('details');
+        details.className = 'safar-cad-panel-group';
+        details.style.cssText = 'flex:none;min-width:0;margin:0;padding:0;background:rgba(20,29,40,.94);border:1px solid #435367;border-radius:5px;overflow:hidden;';
+        details.open = false;
+        const summary = global.document.createElement('summary');
+        summary.textContent = heading;
+        summary.style.cssText = 'cursor:pointer;list-style:disclosure-closed;padding:6px 7px;color:#cbd8e6;font-size:9px;font-weight:700;letter-spacing:.06em;user-select:none;outline:none;';
+        details.appendChild(summary);
+        element.style.margin = '0';
+        element.style.border = '0';
+        element.style.borderRadius = '0';
+        element.style.boxShadow = 'none';
+        element.style.padding = '5px';
+        element.style.width = '100%';
+        element.style.boxSizing = 'border-box';
+        panel.insertBefore(details, element);
+        details.appendChild(element);
+        return details;
+    }
+
+    function keepExtrudeHeightVisible(panel) {
+        if (!panel) return;
+        const section = global.document.getElementById('safar-cad-side-panel-extrude');
+        const input = section && section.querySelector('#safar-extrude-height-input');
+        const field = input && input.parentElement;
+        if (!section || !field) return;
+
+        let pinned = global.document.getElementById('safar-cad-extrude-height-pinned');
+        if (!pinned) {
+            pinned = global.document.createElement('div');
+            pinned.id = 'safar-cad-extrude-height-pinned';
+            pinned.style.cssText = 'display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:7px;flex:none;min-width:0;padding:5px 7px;background:rgba(20,29,40,.98);border:1px solid #435367;border-radius:5px;box-shadow:0 2px 8px rgba(0,0,0,.2);';
+            const heading = global.document.createElement('span');
+            heading.textContent = 'EXTRUDE';
+            heading.style.cssText = 'color:#d5e4f3;font:700 9px Segoe UI,Arial,sans-serif;letter-spacing:.06em;white-space:nowrap;';
+            pinned.appendChild(heading);
+        }
+        // Move only the height row out of the collapsible group. Direction,
+        // taper, extent, termination and dimension fields remain compact below.
+        if (field.parentElement !== pinned) {
+            field.style.margin = '0';
+            field.style.padding = '0';
+            field.style.gridTemplateColumns = 'minmax(0,1fr)';
+            field.style.gap = '0';
+            const label = field.firstChild;
+            if (label && label.nodeType === 3) label.textContent = 'HEIGHT (mm)';
+            pinned.appendChild(field);
+        }
+        const sectionContainer = section.parentElement;
+        if (pinned.parentElement !== panel) {
+            panel.insertBefore(pinned, sectionContainer && sectionContainer.parentElement === panel ? sectionContainer : section);
+        }
+    }
+
+    function compactSidePanelSections(panel) {
+        if (!panel) return;
+        keepExtrudeHeightVisible(panel);
+        compactSidePanelSection(panel, 'safar-cad-work-plane', 'DRAWING PLANE');
+        compactSidePanelSection(panel, 'safar-cad-side-panel-object-layer', 'LAYER');
+        compactSidePanelSection(panel, 'safar-cad-side-panel-extrude', 'MORE DIMENSIONS & EXTRUDE OPTIONS');
+        const nav = global.document.getElementById('safar-cad-side-panel-navigation');
+        if (nav) {
+            nav.style.position = 'sticky';
+            nav.style.top = '0';
+            nav.style.zIndex = '10';
+            nav.style.flex = 'none';
+        }
+    }
+
     function createQuickLayerSelector() {
         const panel = getOrCreateCadSidePanel();
         const nav = createViewCube();
         if (!panel || !nav) return null;
+        createWorkPlaneControl(panel);
         if (layerQuickPanel && layerQuickPanel.isConnected) {
             refreshObjectLayerOptions();
+            compactSidePanelSections(panel);
             return layerQuickPanel;
         }
 
         layerQuickPanel = global.document.createElement('div');
         layerQuickPanel.id = 'safar-cad-side-panel-object-layer';
-        layerQuickPanel.style.cssText = 'position:relative;flex:none;display:flex;flex-direction:column;gap:4px;padding:5px;background:rgba(20,29,40,.97);border:1px solid #435367;border-radius:5px;box-shadow:0 3px 12px rgba(0,0,0,.28);font:11px Segoe UI,Arial,sans-serif;pointer-events:auto;';
+        layerQuickPanel.style.cssText = 'position:sticky;top:0;z-index:5;flex:none;display:flex;flex-direction:column;gap:3px;padding:4px;background:rgba(20,29,40,.98);border:1px solid #435367;border-radius:5px;box-shadow:0 3px 12px rgba(0,0,0,.28);font:10px Segoe UI,Arial,sans-serif;pointer-events:auto;';
 
         const label = global.document.createElement('label');
         label.htmlFor = 'safar-object-layer-select';
@@ -558,6 +787,7 @@
         panel.appendChild(layerQuickPanel);
         createExtrudeHeightControl(panel);
         refreshObjectLayerOptions();
+        compactSidePanelSections(panel);
         return layerQuickPanel;
     }
 
@@ -593,6 +823,178 @@
             wrap.appendChild(input); section.appendChild(wrap); return input;
         };
         extrudeHeightInput = makeField('safar-extrude-height-input', 'EXTRUDE HEIGHT (mm)', 'Select a profile and press Enter to extrude, or a solid and press Enter to change its height.');
+        // --------------------------------------------------
+        // EXTRUSION DIRECTION
+        // --------------------------------------------------
+
+        const directionLabel = global.document.createElement('label');
+        directionLabel.textContent = 'EXTRUDE DIRECTION';
+        directionLabel.style.cssText =
+            'display:flex;flex-direction:column;gap:4px;' +
+            'color:#b7c7d8;font-size:9px;font-weight:650;';
+
+        extrudeDirectionSelect = global.document.createElement('select');
+        extrudeDirectionSelect.id = 'safar-extrude-direction';
+
+        extrudeDirectionSelect.style.cssText =
+            'box-sizing:border-box;width:100%;height:25px;' +
+            'background:#263545;color:#edf3f9;' +
+            'border:1px solid #50647a;border-radius:3px;' +
+            'padding:3px 5px;font:10px Segoe UI,Arial,sans-serif;';
+
+        [
+            ['NORMAL', 'Normal to Profile'],
+            ['X', 'World X Axis'],
+            ['Y', 'World Y Axis'],
+            ['Z', 'World Z Axis'],
+            ['CUSTOM', 'Custom Vector']
+        ].forEach(([value, label]) => {
+            const option = global.document.createElement('option');
+            option.value = value;
+            option.textContent = label;
+            extrudeDirectionSelect.appendChild(option);
+        });
+
+        extrudeDirectionSelect.value = extrudeDirectionMode;
+
+        extrudeDirectionSelect.addEventListener('mousedown', event =>
+            event.stopPropagation()
+        );
+
+        extrudeDirectionSelect.addEventListener('click', event =>
+            event.stopPropagation()
+        );
+
+        directionLabel.appendChild(extrudeDirectionSelect);
+        section.appendChild(directionLabel);
+
+        // --------------------------------------------------
+        // CUSTOM VECTOR INPUTS
+        // --------------------------------------------------
+
+        const vectorPanel = global.document.createElement('div');
+
+        vectorPanel.id = 'safar-extrude-vector-panel';
+
+        vectorPanel.style.cssText =
+            'display:none;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;';
+
+        ['X', 'Y', 'Z'].forEach(axis => {
+            const wrap = global.document.createElement('label');
+
+            wrap.style.cssText =
+                'display:flex;flex-direction:column;gap:2px;' +
+                'color:#b7c7d8;font-size:9px;font-weight:650;';
+
+            wrap.textContent = axis;
+
+            const input = global.document.createElement('input');
+
+            input.type = 'number';
+            input.step = 'any';
+            input.value = axis === 'Z' ? '1' : '0';
+
+            input.style.cssText =
+                'box-sizing:border-box;width:100%;min-width:0;' +
+                'height:25px;background:#263545;color:#edf3f9;' +
+                'border:1px solid #50647a;border-radius:3px;' +
+                'padding:3px 4px;font:10px Segoe UI,Arial,sans-serif;';
+
+            input.addEventListener('mousedown', event =>
+                event.stopPropagation()
+            );
+
+            input.addEventListener('click', event =>
+                event.stopPropagation()
+            );
+
+            extrudeVectorInputs[axis.toLowerCase()] = input;
+            input.addEventListener('input', () => {
+                extrudeCustomVector.set(
+                    Number(extrudeVectorInputs.x && extrudeVectorInputs.x.value || 0),
+                    Number(extrudeVectorInputs.y && extrudeVectorInputs.y.value || 0),
+                    Number(extrudeVectorInputs.z && extrudeVectorInputs.z.value || 0)
+                );
+                updateExtrusionPreview();
+            });
+
+            wrap.appendChild(input);
+            vectorPanel.appendChild(wrap);
+        });
+
+        section.appendChild(vectorPanel);
+
+        // Phase 3: extrusion side and direction treatment.
+        const sideLabel = global.document.createElement('label');
+        sideLabel.textContent = 'EXTRUSION EXTENT';
+        sideLabel.style.cssText = 'display:flex;flex-direction:column;gap:4px;color:#b7c7d8;font-size:9px;font-weight:650;';
+        extrudeSideSelect = global.document.createElement('select');
+        extrudeSideSelect.id = 'safar-extrude-side-mode';
+        extrudeSideSelect.style.cssText = extrudeDirectionSelect.style.cssText;
+        [
+            ['ONE_SIDE', 'One Side'],
+            ['REVERSE', 'Reverse Direction'],
+            ['TWO_SIDES', 'Two Sides (height each side)'],
+            ['SYMMETRIC', 'Symmetric (total height)']
+        ].forEach(([value, label]) => {
+            const option = global.document.createElement('option');
+            option.value = value; option.textContent = label;
+            extrudeSideSelect.appendChild(option);
+        });
+        extrudeSideSelect.value = extrudeSideMode;
+        extrudeSideSelect.addEventListener('mousedown', event => event.stopPropagation());
+        extrudeSideSelect.addEventListener('click', event => event.stopPropagation());
+        extrudeSideSelect.addEventListener('change', () => { extrudeSideMode = extrudeSideSelect.value; updateExtrusionPreview(); });
+        sideLabel.appendChild(extrudeSideSelect);
+        section.appendChild(sideLabel);
+
+        const taperLabel = global.document.createElement('label');
+        taperLabel.textContent = 'TAPER ANGLE (DEG)';
+        taperLabel.style.cssText = 'display:flex;flex-direction:column;gap:4px;color:#b7c7d8;font-size:9px;font-weight:650;';
+        extrudeTaperInput = global.document.createElement('input');
+        extrudeTaperInput.type = 'number'; extrudeTaperInput.id = 'safar-extrude-taper-angle';
+        extrudeTaperInput.min = '-30'; extrudeTaperInput.max = '30'; extrudeTaperInput.step = '0.5';
+        extrudeTaperInput.value = '0'; extrudeTaperInput.title = 'Positive values taper inward; negative values taper outward. Range: -30 to +30 degrees.';
+        extrudeTaperInput.style.cssText = extrudeDirectionSelect.style.cssText;
+        extrudeTaperInput.addEventListener('mousedown', event => event.stopPropagation());
+        extrudeTaperInput.addEventListener('click', event => event.stopPropagation());
+        extrudeTaperInput.addEventListener('change', () => {
+            const angle = Number(extrudeTaperInput.value);
+            if (!Number.isFinite(angle) || angle < -30 || angle > 30) {
+                extrudeTaperInput.value = String(extrudeTaperAngle);
+                context().setPrompt('EXTRUDE TAPER — Enter an angle between -30 and +30 degrees.');
+                return;
+            }
+            extrudeTaperAngle = angle;
+            updateExtrusionPreview();
+        });
+        taperLabel.appendChild(extrudeTaperInput);
+        section.appendChild(taperLabel);
+
+        const terminationLabel = global.document.createElement('label');
+        terminationLabel.textContent = 'EXTRUSION TERMINATION';
+        terminationLabel.style.cssText = 'display:flex;flex-direction:column;gap:4px;color:#b7c7d8;font-size:9px;font-weight:650;';
+        extrudeTerminationSelect = global.document.createElement('select');
+        extrudeTerminationSelect.id = 'safar-extrude-termination';
+        extrudeTerminationSelect.style.cssText = extrudeDirectionSelect.style.cssText;
+        [['DISTANCE','By Distance'],['TO_OBJECT','To Object (select target solid too)']].forEach(([value,label]) => {
+            const option = global.document.createElement('option'); option.value=value; option.textContent=label;
+            extrudeTerminationSelect.appendChild(option);
+        });
+        extrudeTerminationSelect.value = extrudeTerminationMode;
+        extrudeTerminationSelect.addEventListener('mousedown', event => event.stopPropagation());
+        extrudeTerminationSelect.addEventListener('click', event => event.stopPropagation());
+        extrudeTerminationSelect.addEventListener('change', () => { extrudeTerminationMode = extrudeTerminationSelect.value; updateExtrusionPreview(); });
+        terminationLabel.appendChild(extrudeTerminationSelect);
+        section.appendChild(terminationLabel);
+
+        extrudeDirectionSelect.addEventListener('change', () => {
+            extrudeDirectionMode = extrudeDirectionSelect.value;
+
+            vectorPanel.style.display =
+                extrudeDirectionMode === 'CUSTOM' ? 'grid' : 'none';
+            updateExtrusionPreview();
+        });
         dimensionInputs.length = makeField('safar-object-length-input', 'LENGTH (mm)', 'Selected object overall length. Edit and press Enter to apply.');
         dimensionInputs.width = makeField('safar-object-width-input', 'WIDTH (mm)', 'Selected object overall width. Edit and press Enter to apply.');
         dimensionInputs.radius = makeField('safar-object-radius-input', 'RADIUS (mm)', 'Selected circle/cylinder radius. Edit and press Enter to apply.');
@@ -600,14 +1002,30 @@
         dimensionInputs.bottomRL = makeField('safar-bottom-rl-input', 'BOTTOM RL (m)', 'Selected solid bottom reduced level. Edit and press Enter to move vertically.');
         dimensionInputs.topRL = makeField('safar-top-rl-input', 'TOP RL (m)', 'Selected solid top reduced level. Edit and press Enter to adjust its height.');
         dimensionInputs.benchmark.value = benchmarkRL.toFixed(3);
-        [extrudeHeightInput, dimensionInputs.length, dimensionInputs.width, dimensionInputs.radius, dimensionInputs.benchmark, dimensionInputs.bottomRL, dimensionInputs.topRL].forEach(input => {
+        [dimensionInputs.length, dimensionInputs.width, dimensionInputs.radius, dimensionInputs.benchmark, dimensionInputs.bottomRL, dimensionInputs.topRL].forEach(input => {
             input.addEventListener('keydown', event => {
                 if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); applyDimensionInput(input); }
             });
         });
         extrudeHeightInput.addEventListener('input', () => {
             const value = Number(extrudeHeightInput.value);
-            if (Number.isFinite(value) && value > 0) extrudeHeightMm = value;
+            if (Number.isFinite(value) && value > 0) {
+                extrudeHeightMm = value;
+                if (extrusionPreviewActive) updateExtrusionPreview(value);
+            }
+        });
+        extrudeHeightInput.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                event.stopPropagation();
+                applyDimensionInput(extrudeHeightInput);
+            } else if (event.key === 'Escape' && extrusionPreviewActive) {
+                event.preventDefault();
+                event.stopPropagation();
+                clearExtrusionPreview();
+                context().setPendingCommand(null);
+                context().setPrompt('EXTRUDE cancelled.');
+            }
         });
         panel.appendChild(section);
         refreshDimensionPanel();
@@ -621,6 +1039,129 @@
         return box && !box.isEmpty() ? box.clone() : null;
     }
 
+    function getSolidExtrusionCapInfo(solid) {
+        if (!solid || !solid.geometry || !solid.userData) return null;
+
+        normalizeSolidExtrusionMetadata(solid);
+        solid.updateMatrixWorld(true);
+
+        const planeNormals = {
+            XY: new THREE.Vector3(0, 0, 1),
+            XZ: new THREE.Vector3(0, -1, 0),
+            YZ: new THREE.Vector3(1, 0, 0)
+        };
+
+        const directionData = solid.userData.extrusionDirection;
+
+        const localDirection = new THREE.Vector3(
+            Number(directionData[0]),
+            Number(directionData[1]),
+            Number(directionData[2])
+        );
+
+        if (!Number.isFinite(localDirection.lengthSq()) ||
+            localDirection.lengthSq() < 1e-12) {
+            return null;
+        }
+
+        localDirection.normalize();
+
+        const worldOrigin = solid.localToWorld(
+            new THREE.Vector3(0, 0, 0)
+        );
+
+        const worldDirection = solid.localToWorld(
+            localDirection.clone()
+        ).sub(worldOrigin).normalize();
+
+        if (!Number.isFinite(worldDirection.lengthSq()) ||
+            worldDirection.lengthSq() < 1e-12) {
+            return null;
+        }
+
+        const workPlane = String(
+            solid.userData.workPlane || 'XY'
+        ).toUpperCase();
+
+        const localNormal = planeNormals[workPlane] || planeNormals.XY;
+
+        const normalMatrix = new THREE.Matrix3()
+            .getNormalMatrix(solid.matrixWorld);
+
+        const worldNormal = localNormal.clone()
+            .applyMatrix3(normalMatrix)
+            .normalize();
+
+        const directionDot = worldDirection.dot(worldNormal);
+
+        if (!Number.isFinite(directionDot) ||
+            Math.abs(directionDot) < 1e-8) {
+            return null;
+        }
+
+        const position = solid.geometry.getAttribute('position');
+
+        if (!position || !position.count) return null;
+
+        let minProjection = Infinity;
+        let maxProjection = -Infinity;
+
+        const vertices = [];
+
+        for (let i = 0; i < position.count; i++) {
+            const point = new THREE.Vector3(
+                position.getX(i),
+                position.getY(i),
+                position.getZ(i)
+            );
+
+            solid.localToWorld(point);
+
+            const projection = point.dot(worldNormal);
+
+            vertices.push({
+                point,
+                projection
+            });
+
+            minProjection = Math.min(minProjection, projection);
+            maxProjection = Math.max(maxProjection, projection);
+        }
+
+        const topProjection = directionDot > 0
+            ? maxProjection
+            : minProjection;
+
+        const tolerance = Math.max(
+            1e-7,
+            (maxProjection - minProjection) * 1e-7
+        );
+
+        let capMaxZ = -Infinity;
+
+        vertices.forEach(vertex => {
+            if (Math.abs(vertex.projection - topProjection) <= tolerance) {
+                capMaxZ = Math.max(capMaxZ, vertex.point.z);
+            }
+        });
+
+        if (!Number.isFinite(capMaxZ)) return null;
+
+        const normalSeparation = maxProjection - minProjection;
+        const currentHeight = normalSeparation / Math.abs(directionDot);
+
+        if (!Number.isFinite(currentHeight) || currentHeight <= 0) {
+            return null;
+        }
+
+        return {
+            worldDirection,
+            directionZ: worldDirection.z,
+            capMaxZ,
+            currentHeight
+        };
+    }
+
     function refreshDimensionPanel() {
         if (!extrudeHeightInput || !extrudeHeightInput.isConnected) return;
         const selected = context().getSelectedObjects().filter(Boolean);
@@ -631,9 +1172,15 @@
         const dims = box ? { length: box.max.x - box.min.x, width: box.max.y - box.min.y, height: box.max.z - box.min.z } : null;
         const circle = single && (data.type === 'circle' || String(data.profileType || '').toLowerCase() === 'circle');
         if (isSolid) {
-            const h = Number(data.height) || (dims && dims.height) || extrudeHeightMm;
-            extrudeHeightInput.value = String(h);
-            extrudeHeightInput.title = 'Selected solid height. Change and press Enter to resize.';
+            // Display the actual transformed extrusion length. Object scaling
+            // changes world dimensions without changing the source geometry or
+            // its legacy height field, so do not trust data.height here.
+            const capInfo = getSolidExtrusionCapInfo(single);
+            const actualHeight = capInfo && Number.isFinite(capInfo.currentHeight)
+                ? capInfo.currentHeight
+                : (Number(data.extrusionHeight) || Number(data.height) || (dims && dims.height) || extrudeHeightMm);
+            extrudeHeightInput.value = String(Number(actualHeight.toFixed(6)));
+            extrudeHeightInput.title = 'Selected solid extrusion length in current world units (mm). Change and press Enter to resize.';
         } else if (!selected.length) {
             extrudeHeightInput.value = String(extrudeHeightMm);
             extrudeHeightInput.title = 'Default extrusion height. Select a closed profile and press Enter.';
@@ -650,6 +1197,9 @@
         ['length','width'].forEach(key => { if (dimensionInputs[key]) dimensionInputs[key].disabled = !single || !!circle; });
         const worldBox = single ? new THREE.Box3().setFromObject(single) : null;
         const showLevels = !!(isSolid && worldBox && !worldBox.isEmpty());
+        const extrusionCapInfo = showLevels
+            ? getSolidExtrusionCapInfo(single)
+            : null;
         if (dimensionInputs.benchmark) {
             if (global.document.activeElement !== dimensionInputs.benchmark) dimensionInputs.benchmark.value = benchmarkRL.toFixed(3);
         }
@@ -658,8 +1208,21 @@
             dimensionInputs.bottomRL.disabled = !showLevels;
         }
         if (dimensionInputs.topRL) {
-            dimensionInputs.topRL.value = showLevels ? (benchmarkRL + worldBox.max.z / 1000).toFixed(3) : '';
-            dimensionInputs.topRL.disabled = !showLevels;
+            const canEditTopRL = !!(
+                showLevels &&
+                extrusionCapInfo &&
+                Math.abs(extrusionCapInfo.directionZ) > 1e-8
+            );
+
+            dimensionInputs.topRL.value = canEditTopRL
+                ? (benchmarkRL + extrusionCapInfo.capMaxZ / 1000).toFixed(3)
+                : '';
+
+            dimensionInputs.topRL.disabled = !canEditTopRL;
+
+            dimensionInputs.topRL.title = canEditTopRL
+                ? 'Highest elevation of the extrusion cap. Edit and press Enter to resize.'
+                : 'TOP RL cannot be edited because the extrusion direction has no vertical component.';
         }
         if (dimensionInputs.benchmark) dimensionInputs.benchmark.disabled = false;
         if (extrudeHeightInput) extrudeHeightInput.disabled = selected.length > 1;
@@ -689,9 +1252,41 @@
                 const targetWorldZ = (value - benchmarkRL) * 1000;
                 object.position.z += targetWorldZ - worldBox.min.z;
             } else {
-                const bottomRL = benchmarkRL + worldBox.min.z / 1000;
-                const requestedHeight = (value - bottomRL) * 1000;
-                if (requestedHeight <= 0) { context().setPrompt('LEVEL ERROR — Top RL must be higher than bottom RL.'); return; }
+                const capInfo = getSolidExtrusionCapInfo(object);
+
+                if (!capInfo ||
+                    !Number.isFinite(capInfo.currentHeight) ||
+                    capInfo.currentHeight <= 0) {
+                    context().setPrompt(
+                        'TOP RL ERROR — Could not determine the extrusion cap and current height.'
+                    );
+                    return;
+                }
+
+                if (Math.abs(capInfo.directionZ) < 1e-8) {
+                    context().setPrompt(
+                        'TOP RL ERROR — This extrusion direction has no vertical component.'
+                    );
+                    return;
+                }
+
+                const targetWorldZ = (value - benchmarkRL) * 1000;
+
+                const elevationDifference = targetWorldZ - capInfo.capMaxZ;
+
+                const heightDifference =
+                    elevationDifference / capInfo.directionZ;
+
+                const requestedHeight =
+                    capInfo.currentHeight + heightDifference;
+
+                if (!Number.isFinite(requestedHeight) || requestedHeight <= 0) {
+                    context().setPrompt(
+                        'TOP RL ERROR — The requested elevation would produce an invalid extrusion height.'
+                    );
+                    return;
+                }
+
                 setSelectedSolidHeight(requestedHeight);
                 return;
             }
@@ -706,21 +1301,49 @@
             extrudeHeightMm = value;
             const solids = selected.filter(o => o.userData && o.userData.type === 'solid');
             const profiles = selected.filter(o => o.userData && ['rect','rectangle','square','polyline','circle'].includes(String(o.userData.type).toLowerCase()));
-            if (solids.length && !profiles.length) setSelectedSolidHeight(value);
-            else if (profiles.length && !solids.length) extrudeSelected(value);
-            else if (!selected.length) context().setPrompt(`EXTRUDE HEIGHT — ${value} mm saved as default. Select a closed profile and press Enter.`);
-            else context().setPrompt('DIMENSION — Select only profiles or only solids.');
+            if (solids.length && !profiles.length) {
+                setSelectedSolidHeight(value);
+            } else if (profiles.length && !solids.length) {
+                // First Enter opens/refreshes the temporary preview; a second
+                // Enter commits it. Never create a permanent solid from the
+                // height field's ordinary input/change event.
+                if (!extrusionPreviewActive) {
+                    extrusionPreviewActive = true;
+                    extrusionPreviewHeight = value;
+                    updateExtrusionPreview(value);
+                    context().setPrompt('EXTRUDE PREVIEW — Review the translucent solid. Press Enter again to create it, or Esc to cancel.');
+                } else {
+                    commitExtrusionPreview(value);
+                }
+            } else if (!selected.length) {
+                context().setPrompt(`EXTRUDE HEIGHT — ${value} mm saved as default. Select a closed profile and run EXTRUDE to preview.`);
+            } else {
+                context().setPrompt('DIMENSION — Select only profiles or only solids.');
+            }
             return;
         }
         if (selected.length !== 1) { context().setPrompt('DIMENSION — Select exactly one object to edit its dimensions.'); return; }
         const object = selected[0], data = object.userData || {}, isCircle = data.type === 'circle' || String(data.profileType || '').toLowerCase() === 'circle';
-        if (input === dimensionInputs.radius && isCircle) resizeGeometryAroundCenter(object, value, value);
-        else if (input === dimensionInputs.length) resizeGeometryAroundCenter(object, value, null);
-        else if (input === dimensionInputs.width) resizeGeometryAroundCenter(object, null, value);
+
+        // IMPORTANT: capture the BEFORE state prior to changing vertex positions.
+        // The previous implementation captured after resizeGeometryAroundCenter(),
+        // causing Undo and Redo to store the same geometry snapshot.
+        const before = context().captureObjects([object]);
+        let resized = false;
+
+        if (input === dimensionInputs.radius && isCircle) resized = resizeGeometryAroundCenter(object, value, value);
+        else if (input === dimensionInputs.length) resized = resizeGeometryAroundCenter(object, value, null);
+        else if (input === dimensionInputs.width) resized = resizeGeometryAroundCenter(object, null, value);
         else { context().setPrompt('DIMENSION — This field is not applicable to the selected object.'); return; }
+
+        if (!resized) {
+            context().setPrompt('DIMENSION — Could not resize the selected object geometry.');
+            return;
+        }
+
         if (isCircle && input === dimensionInputs.radius) data.radius = value;
         updateSolidEdges(object);
-        if (context().recordModify) context().recordModify([object], context().captureObjects([object]));
+        if (context().recordModify) context().recordModify([object], before);
         if (global.SafarEdgeProjectFiles) global.SafarEdgeProjectFiles.markDirty();
         if (global.SafarEdgeMeasurements) {
             global.SafarEdgeMeasurements.syncFromMenu({ source: 'manual' });
@@ -821,6 +1444,33 @@
         const zUp = new THREE.Vector3(0, 0, 1);
         const yUp = new THREE.Vector3(0, 1, 0);
         activeStandardView = view;
+        const workPlaneByView = {
+            top: 'XY',
+            bottom: 'XY',
+            front: 'XZ',
+            back: 'XZ',
+            left: 'YZ',
+            right: 'YZ',
+            iso: 'XY',
+            home: 'XY'
+        };
+
+        if (workPlaneByView[view]) {
+            activeWorkPlane = workPlaneByView[view];
+        }
+
+        if (workPlaneByView[view]) {
+            activeWorkPlane = workPlaneByView[view];
+        }
+
+        const workPlaneSelect = global.document.getElementById(
+            'safar-work-plane-select'
+        );
+
+        if (workPlaneSelect) {
+            workPlaneSelect.value = activeWorkPlane;
+        }
+
         orbitEnabled = (view === 'iso' || view === 'home');
         if (view === 'fit') {
             // FIT frames the model without changing its coordinates or forcing
@@ -911,42 +1561,47 @@
     // The plane passes through the current view target so cursor rays always
     // intersect it instead of becoming parallel to the old fixed XY plane.
     function getDrawingFrame() {
-        const cam = camera();
-        if (!cam) {
-            const origin = new THREE.Vector3(0, 0, 0);
-            const u = new THREE.Vector3(1, 0, 0);
-            const v = new THREE.Vector3(0, 1, 0);
-            const normal = new THREE.Vector3(0, 0, 1);
-            return { origin, u, v, normal, plane: new THREE.Plane(normal, 0) };
-        }
+        const definitions = {
+            XY: {
+                origin: new THREE.Vector3(0, 0, 0),
+                u: new THREE.Vector3(1, 0, 0),
+                v: new THREE.Vector3(0, 1, 0),
+                normal: new THREE.Vector3(0, 0, 1)
+            },
 
-        cam.updateMatrixWorld(true);
-        const origin = target.clone();
-        let normal;
-        if (activeStandardView === 'front' || activeStandardView === 'back') {
-            normal = new THREE.Vector3(0, 1, 0);
-        } else if (activeStandardView === 'left' || activeStandardView === 'right') {
-            normal = new THREE.Vector3(1, 0, 0);
-        } else {
-            normal = new THREE.Vector3(0, 0, 1);
-            origin.z = 0;
-        }
+            XZ: {
+                origin: new THREE.Vector3(0, 0, 0),
+                u: new THREE.Vector3(1, 0, 0),
+                v: new THREE.Vector3(0, 0, 1),
+                normal: new THREE.Vector3(0, -1, 0)
+            },
 
-        let u;
-        let v;
-        if (activeStandardView === 'front' || activeStandardView === 'back') {
-            u = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion).normalize();
-            v = new THREE.Vector3(0, 0, 1);
-        } else if (activeStandardView === 'left' || activeStandardView === 'right') {
-            u = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion).normalize();
-            v = new THREE.Vector3(0, 0, 1);
-        } else {
-            // Top and ISO drafting remains on the world XY plane.
-            u = new THREE.Vector3(1, 0, 0);
-            v = new THREE.Vector3(0, 1, 0);
-        }
-        const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, origin);
-        return { origin, u, v, normal, plane };
+            YZ: {
+                origin: new THREE.Vector3(0, 0, 0),
+                u: new THREE.Vector3(0, 1, 0),
+                v: new THREE.Vector3(0, 0, 1),
+                normal: new THREE.Vector3(1, 0, 0)
+            }
+        };
+
+        const frame = definitions[activeWorkPlane] || definitions.XY;
+
+        const origin = frame.origin.clone();
+        const u = frame.u.clone();
+        const v = frame.v.clone();
+        const normal = frame.normal.clone();
+
+        const plane = new THREE.Plane()
+            .setFromNormalAndCoplanarPoint(normal, origin);
+
+        return {
+            name: activeWorkPlane,
+            origin,
+            u,
+            v,
+            normal,
+            plane
+        };
     }
 
     function toggleMode() {
@@ -962,6 +1617,7 @@
 
     function onDown(event) {
         if (event.target && event.target.closest && event.target.closest('#safar-3d-navigation')) return;
+        if (pickExtrusionGizmo(event)) return;
         // A deliberate left+right chord is the ISO orbit gesture. The first
         // button may already have started a SELECT window in the CAD core, so
         // cancel that state as soon as the second button joins the chord.
@@ -1118,121 +1774,627 @@
         return Math.abs(sum) / 2;
     }
 
-    function profileToShape(object) {
+    function getExtrusionDirection(profile, frame) {
+        const mode = extrudeDirectionMode;
+        let direction = null;
+
+        if (mode === 'NORMAL') {
+            direction = frame.normal.clone();
+        } else if (mode === 'X') {
+            direction = new THREE.Vector3(1, 0, 0);
+        } else if (mode === 'Y') {
+            direction = new THREE.Vector3(0, 1, 0);
+        } else if (mode === 'Z') {
+            direction = new THREE.Vector3(0, 0, 1);
+        } else if (mode === 'CUSTOM') {
+            direction = new THREE.Vector3(
+                Number(extrudeVectorInputs.x && extrudeVectorInputs.x.value),
+                Number(extrudeVectorInputs.y && extrudeVectorInputs.y.value),
+                Number(extrudeVectorInputs.z && extrudeVectorInputs.z.value)
+            );
+
+            if (
+                !Number.isFinite(direction.x) ||
+                !Number.isFinite(direction.y) ||
+                !Number.isFinite(direction.z) ||
+                direction.lengthSq() < 1e-12
+            ) {
+                return null;
+            }
+        }
+
+        if (!direction || direction.lengthSq() < 1e-12) return null;
+
+        direction.normalize();
+
+        // A direction lying in the profile plane cannot create a
+        // non-zero-volume extrusion.
+        if (Math.abs(direction.dot(frame.normal)) < 1e-6) {
+            return null;
+        }
+
+        return direction;
+    }
+
+    function profileToShape(object, frame) {
         const data = object.userData || {};
         const shape = new THREE.Shape();
-        if (data.type === 'circle' && data.center && Number(data.radius) > 0) {
-            const center = data.center.isVector3 ? data.center.clone() : new THREE.Vector3(data.center.x, data.center.y, data.center.z || 0);
-            object.localToWorld(center);
-            shape.absarc(center.x, center.y, Number(data.radius), 0, Math.PI * 2, false);
-            return { shape, area: Math.PI * Number(data.radius) ** 2, length: Number(data.radius) * 2, width: Number(data.radius) * 2 };
+
+        const toPlanePoint = value => {
+            const point = value && value.isVector3
+                ? value.clone()
+                : new THREE.Vector3(
+                    Number(value.x) || 0,
+                    Number(value.y) || 0,
+                    Number(value.z) || 0
+                );
+
+            object.localToWorld(point);
+
+            const relative = point.sub(frame.origin);
+
+            return new THREE.Vector2(
+                relative.dot(frame.u),
+                relative.dot(frame.v)
+            );
+        };
+
+        if (
+            data.type === 'circle' &&
+            data.center &&
+            Number(data.radius) > 0
+        ) {
+            const center = toPlanePoint(data.center);
+            const radius = Number(data.radius);
+
+            shape.absarc(
+                center.x,
+                center.y,
+                radius,
+                0,
+                Math.PI * 2,
+                false
+            );
+
+            return {
+                shape,
+                area: Math.PI * radius * radius,
+                length: radius * 2,
+                width: radius * 2
+            };
         }
+
         const source = Array.isArray(data.points) ? data.points : [];
+
         if (source.length < 4) return null;
-        let pts = source.map(p => {
-            const v = p.isVector3 ? p.clone() : new THREE.Vector3(Number(p.x) || 0, Number(p.y) || 0, Number(p.z) || 0);
-            object.localToWorld(v);
-            return new THREE.Vector2(v.x, v.y);
-        });
-        if (pts.length > 2 && pts[0].distanceTo(pts[pts.length - 1]) < 1e-6) pts.pop();
-        if (pts.length < 3) return null;
-        const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
-        const length = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
-        const width = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
-        if (length <= 1e-8 || width <= 1e-8) return null;
-        shape.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i].x, pts[i].y);
+
+        let points = source.map(toPlanePoint);
+
+        if (
+            points.length > 2 &&
+            points[0].distanceTo(points[points.length - 1]) < 1e-6
+        ) {
+            points.pop();
+        }
+
+        if (points.length < 3) return null;
+
+        const xs = points.map(point => point.x);
+        const ys = points.map(point => point.y);
+
+        const sizeX = Math.max(...xs) - Math.min(...xs);
+        const sizeY = Math.max(...ys) - Math.min(...ys);
+
+        if (sizeX <= 1e-8 || sizeY <= 1e-8) return null;
+
+        const length = Math.max(sizeX, sizeY);
+        const width = Math.min(sizeX, sizeY);
+
+        shape.moveTo(points[0].x, points[0].y);
+
+        for (let i = 1; i < points.length; i++) {
+            shape.lineTo(points[i].x, points[i].y);
+        }
+
         shape.closePath();
-        return { shape, area: polygonArea(pts), length, width };
+
+        return {
+            shape,
+            area: polygonArea(points),
+            length,
+            width
+        };
     }
 
     function extrudeSelected(height) {
         const ctx = context();
-        const selected = Array.from(new Set(ctx.getSelectedObjects())).filter(o =>
+
+        const allSelected = Array.from(new Set(ctx.getSelectedObjects())).filter(Boolean);
+        const selected = allSelected.filter(o =>
             ['rect', 'rectangle', 'square', 'polyline', 'circle'].includes(
                 String((o.userData || {}).type).toLowerCase()
             )
         );
+        const targetSolids = allSelected.filter(o => o.userData && o.userData.type === 'solid' && o.isMesh);
+
         if (!selected.length) {
-            ctx.setPrompt('EXTRUDE — Select closed rectangle, circle or closed polyline profiles first, then run EXTRUDE.');
+            ctx.setPrompt(
+                'EXTRUDE — Select closed rectangle, circle or closed polyline profiles first, then run EXTRUDE.'
+            );
             return false;
         }
+
+        if (!Number.isFinite(height) || height <= 0) {
+            ctx.setPrompt('EXTRUDE — Height must be a positive number in mm.');
+            return false;
+        }
+
+        const frame = getDrawingFrame();
         const created = [];
-        selected.forEach(profile => {
-            const result = profileToShape(profile);
-            if (!result) return;
-            const geometry = new THREE.ExtrudeGeometry(result.shape, { depth: height, bevelEnabled: false, steps: 1, curveSegments: 48 });
+
+        for (const profile of selected) {
+            let direction = getExtrusionDirection(profile, frame);
+
+            if (!direction) {
+                ctx.setPrompt(
+                    'EXTRUDE — Invalid direction. Choose a direction with a component normal to the profile plane.'
+                );
+                return false;
+            }
+
+            const result = profileToShape(profile, frame);
+
+            if (!result) continue;
+
+            // One Side: +direction. Reverse: -direction. Two Sides: the
+            // entered distance on both sides. Symmetric: entered total split
+            // equally around the profile plane.
+            let depth = height;
+            let startOffset = 0;
+            if (extrudeSideMode === 'REVERSE') {
+                direction.negate();
+            } else if (extrudeSideMode === 'TWO_SIDES') {
+                depth = height * 2;
+                startOffset = -height;
+            } else if (extrudeSideMode === 'SYMMETRIC') {
+                depth = height;
+                startOffset = -height / 2;
+            }
+
+            if (extrudeTerminationMode === 'TO_OBJECT') {
+                if (!targetSolids.length) {
+                    ctx.setPrompt('EXTRUDE TO OBJECT — Select one or more closed profiles and a target solid.');
+                    return false;
+                }
+                if (targetSolids.includes(profile)) {
+                    ctx.setPrompt('EXTRUDE TO OBJECT — A profile cannot also be its target solid.');
+                    return false;
+                }
+                profile.updateMatrixWorld(true);
+                const profileBox = new THREE.Box3().setFromObject(profile);
+                const rayOrigin = profileBox.getCenter(new THREE.Vector3());
+                const ray = new THREE.Raycaster(rayOrigin, direction.clone(), 1e-5, 1e12);
+                const hits = ray.intersectObjects(targetSolids, false);
+                if (!hits.length || !Number.isFinite(hits[0].distance) || hits[0].distance <= 1e-5) {
+                    ctx.setPrompt('EXTRUDE TO OBJECT — No target surface was found along the selected extrusion direction.');
+                    return false;
+                }
+                depth = hits[0].distance;
+                startOffset = 0;
+            }
+
+            const geometry = new THREE.ExtrudeGeometry(result.shape, {
+                depth,
+                bevelEnabled: false,
+                steps: 1,
+                curveSegments: 48
+            });
+
+            // Taper is applied to the extrusion cross-section before mapping
+            // into the active work plane. Scaling is centred on the profile
+            // bounds, and is limited to a range that avoids severe collapse.
+            if (Math.abs(extrudeTaperAngle) > 1e-8) {
+                const pos = geometry.getAttribute('position');
+                const points2d = result.shape.getPoints(48);
+                const minX = Math.min(...points2d.map(v => v.x));
+                const maxX = Math.max(...points2d.map(v => v.x));
+                const minY = Math.min(...points2d.map(v => v.y));
+                const maxY = Math.max(...points2d.map(v => v.y));
+                const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+                const halfSpan = Math.max((maxX-minX)/2, (maxY-minY)/2, 1e-6);
+                const tangent = Math.tan(THREE.MathUtils.degToRad(extrudeTaperAngle));
+                for (let vi = 0; vi < pos.count; vi++) {
+                    const z = pos.getZ(vi);
+                    const scale = 1 - (tangent * z / halfSpan);
+                    if (scale <= 0.05) {
+                        geometry.dispose();
+                        ctx.setPrompt('EXTRUDE TAPER — This angle and height collapse the profile. Reduce the taper angle or height.');
+                        return false;
+                    }
+                    pos.setXY(vi, cx + (pos.getX(vi)-cx)*scale, cy + (pos.getY(vi)-cy)*scale);
+                }
+                pos.needsUpdate = true;
+            }
+
+            // Shift the start cap for reverse-symmetric/two-sided extents.
+            const transform = new THREE.Matrix4().makeBasis(frame.u, frame.v, direction);
+            transform.setPosition(frame.origin.clone().addScaledVector(direction, startOffset));
+            geometry.applyMatrix4(transform);
             geometry.computeVertexNormals();
             geometry.computeBoundingBox();
-            const material = new THREE.MeshStandardMaterial({ color: 0x8aa7bd, metalness: 0.18, roughness: 0.52, side: THREE.DoubleSide });
-            // Keep mesh alive for depth; FILL controls surface colour only.
+            geometry.computeBoundingSphere();
+
+            const material = new THREE.MeshStandardMaterial({
+                color: 0x8aa7bd,
+                metalness: 0.18,
+                roughness: 0.52,
+                side: THREE.DoubleSide
+            });
+
             material.visible = true;
             material.colorWrite = solidFillEnabled;
+
             const solid = new THREE.Mesh(geometry, material);
             solid.castShadow = true;
             solid.receiveShadow = true;
+
+            const layerName = String(
+                (profile.userData && profile.userData.layer) || '0'
+            );
+
+            const layerSettings = CAD.Dimension &&
+                typeof CAD.Dimension.getSettings === 'function'
+                ? (CAD.Dimension.getSettings() || {})
+                : {};
+
+            const layerColor =
+                (layerSettings.layers || {})[layerName]?.color || '#ffffff';
+
             const edgeLines = new THREE.LineSegments(
                 new THREE.EdgesGeometry(geometry, 1.5),
                 new THREE.LineBasicMaterial({
-                    color: (CAD.Dimension.getSettings().layers[
-                        String((profile.userData && profile.userData.layer) || '0')
-                    ] || {}).color || '#ffffff',
+                    color: layerColor,
                     depthTest: false,
                     depthWrite: false,
-                    transparent: false, toneMapped: false
+                    transparent: false,
+                    toneMapped: false
                 })
             );
+
             edgeLines.name = 'SAFAR_EDGE_SOLID_OUTLINES';
             edgeLines.userData.isCadSolidEdges = true;
             edgeLines.userData.sourceGeometryId = geometry.uuid;
-            edgeLines.userData.sourcePositionVersion = geometry.getAttribute('position')?.version || 0;
+            edgeLines.userData.sourcePositionVersion =
+                geometry.getAttribute('position')?.version || 0;
             edgeLines.renderOrder = 1000;
             edgeLines.frustumCulled = false;
             edgeLines.visible = !solidFillEnabled;
+
             solid.add(edgeLines);
-            const factor = result.area / Math.max(result.length * result.width, 1e-12);
+
+            const factor = result.area /
+                Math.max(result.length * result.width, 1e-12);
+
             const profileType = String(
                 (profile.userData && profile.userData.type) || 'polyline'
             ).toLowerCase();
+
             solid.userData = {
-                type: 'solid', closed: true, is3D: true,
-                layer: (profile.userData && profile.userData.layer) || '0',
-                height: height, baseArea: result.area, baseAreaFactor: factor,
+                type: 'solid',
+                closed: true,
+                is3D: true,
+                layer: layerName,
+                height: depth,
+                baseArea: result.area,
+                baseAreaFactor: factor,
                 profileType: profileType,
-                // Keep the source circle radius for cylinder takeoff.
-                // Do not derive it from the solid bounding-box diameter.
                 radius: profileType === 'circle'
                     ? Number(profile.userData && profile.userData.radius)
                     : null,
-                originalColor: 0x8aa7bd, colorMode: 'ByLayer', isCadSolidEdges: true
+
+                // Phase 2C — Versioned extrusion metadata
+                extrusionMetadataVersion: 1,
+                workPlane: frame.name,
+                extrusionDirection: direction.clone().normalize().toArray(),
+                extrusionOrigin: frame.origin.toArray(),
+                extrusionHeight: depth,
+                extrusionExtentMode: extrudeSideMode,
+                extrusionTaperAngle: extrudeTaperAngle,
+                extrusionStartOffset: startOffset,
+
+                originalColor: 0x8aa7bd,
+                colorMode: 'ByLayer',
+                isCadSolidEdges: true
             };
+
             created.push({ profile, solid });
-        });
-        if (!created.length) { ctx.setPrompt('EXTRUDE — No valid closed profiles were found.'); return false; }
-        // EXTRUDE is a replacement operation: remove each 2D profile from
-        // the CAD registry before registering its corresponding 3D solid.
-        // This prevents the original profile and its extrusion being measured
-        // together. The same profile is processed only once.
+        }
+
+        if (!created.length) {
+            ctx.setPrompt('EXTRUDE — No valid closed profiles were found.');
+            return false;
+        }
+
         const replacedProfiles = new Set();
+
         created.forEach(item => {
             if (replacedProfiles.has(item.profile)) return;
+
             replacedProfiles.add(item.profile);
             ctx.removeEntity(item.profile);
             ctx.addEntity(item.solid, false);
         });
-        ctx.recordReplace(created.map(x => x.profile), created.map(x => x.solid));
+
+        ctx.recordReplace(
+            created.map(item => item.profile),
+            created.map(item => item.solid)
+        );
+
         ctx.clearSelection();
-        ctx.setSelection(created.map(x => x.solid));
+        ctx.setSelection(created.map(item => item.solid));
+
         applySolidDisplay();
         refreshDimensionPanel();
+
         if (global.SafarEdgeMeasurements) {
-            const syncResult = global.SafarEdgeMeasurements.syncFromMenu({ source: 'manual' });
-            const audit = global.SafarEdgeMeasurements.auditCurrentDrawing && global.SafarEdgeMeasurements.auditCurrentDrawing();
-            if (audit && !audit.ok) console.warn('SAFAR EDGE post-extrusion measurement audit:', audit);
-            if (syncResult && !syncResult.ok) console.warn('SAFAR EDGE measurement sync after extrusion failed:', syncResult.message);
+            const syncResult =
+                global.SafarEdgeMeasurements.syncFromMenu({ source: 'manual' });
+
+            const audit =
+                global.SafarEdgeMeasurements.auditCurrentDrawing &&
+                global.SafarEdgeMeasurements.auditCurrentDrawing();
+
+            if (audit && !audit.ok) {
+                console.warn('SAFAR EDGE post-extrusion measurement audit:', audit);
+            }
+
+            if (syncResult && !syncResult.ok) {
+                console.warn(
+                    'SAFAR EDGE measurement sync after extrusion failed:',
+                    syncResult.message
+                );
+            }
         }
-        ctx.setPrompt(`EXTRUDE — Created ${created.length} solid(s), ${height} mm. Outlines and measurement check refreshed.`);
+
+        ctx.setPrompt(
+            `EXTRUDE — Created ${created.length} solid(s). Input: ${height} mm; extent: ${extrudeSideMode}; termination: ${extrudeTerminationMode}; direction: ${extrudeDirectionMode}; taper: ${extrudeTaperAngle}°.`
+        );
+
         return true;
+    }
+
+    // Remove only Phase 4 transient objects; never touch CAD entities or core previews.
+    function clearExtrusionPreview() {
+        const sc = scene();
+        [extrusionPreviewGroup, extrusionGizmoGroup].forEach(group => {
+            if (!group) return;
+            if (sc) sc.remove(group);
+            group.traverse(node => {
+                if (node.geometry && node.geometry.dispose) node.geometry.dispose();
+                if (node.material) {
+                    const materials = Array.isArray(node.material) ? node.material : [node.material];
+                    materials.forEach(material => material && material.dispose && material.dispose());
+                }
+            });
+        });
+        extrusionPreviewGroup = null;
+        extrusionGizmoGroup = null;
+        extrusionGizmoHandles = [];
+        extrusionPreviewActive = false;
+    }
+
+    function buildExtrusionPreviewGeometry(profile, height) {
+        const frame = getDrawingFrame();
+        const result = profileToShape(profile, frame);
+        if (!result) return null;
+        let direction = getExtrusionDirection(profile, frame);
+        if (!direction) return null;
+        let depth = height;
+        let startOffset = 0;
+        if (extrudeSideMode === 'REVERSE') direction.negate();
+        else if (extrudeSideMode === 'TWO_SIDES') { depth = height * 2; startOffset = -height; }
+        else if (extrudeSideMode === 'SYMMETRIC') { startOffset = -height / 2; }
+        if (extrudeTerminationMode === 'TO_OBJECT') {
+            const targets = context().getSelectedObjects().filter(o => o && o.isMesh && o.userData && o.userData.type === 'solid' && o !== profile);
+            if (!targets.length) return null;
+            profile.updateMatrixWorld(true);
+            const box = new THREE.Box3().setFromObject(profile);
+            const ray = new THREE.Raycaster(box.getCenter(new THREE.Vector3()), direction.clone(), 1e-5, 1e12);
+            const hit = ray.intersectObjects(targets, false)[0];
+            if (!hit) return null;
+            depth = hit.distance;
+            startOffset = 0;
+        }
+        const geometry = new THREE.ExtrudeGeometry(result.shape, { depth, bevelEnabled: false, steps: 1, curveSegments: 48 });
+        if (Math.abs(extrudeTaperAngle) > 1e-8) {
+            const pos = geometry.getAttribute('position');
+            const pts = result.shape.getPoints(48);
+            const xs = pts.map(v => v.x), ys = pts.map(v => v.y);
+            const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+            const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+            const span = Math.max((Math.max(...xs)-Math.min(...xs))/2, (Math.max(...ys)-Math.min(...ys))/2, 1e-6);
+            const tangent = Math.tan(THREE.MathUtils.degToRad(extrudeTaperAngle));
+            for (let i=0; i<pos.count; i++) {
+                const scale = 1 - tangent * pos.getZ(i) / span;
+                if (scale <= 0.05) { geometry.dispose(); return null; }
+                pos.setXY(i, cx+(pos.getX(i)-cx)*scale, cy+(pos.getY(i)-cy)*scale);
+            }
+            pos.needsUpdate = true;
+        }
+        const matrix = new THREE.Matrix4().makeBasis(frame.u, frame.v, direction);
+        matrix.setPosition(frame.origin.clone().addScaledVector(direction, startOffset));
+        geometry.applyMatrix4(matrix);
+        geometry.computeVertexNormals();
+        geometry.computeBoundingSphere();
+        return { geometry, direction, frame, profile };
+    }
+
+    function createExtrusionGizmo(origin, direction, scale) {
+        const group = new THREE.Group();
+        group.name = 'SAFAR_EDGE_EXTRUSION_DIRECTION_GIZMO';
+        const axes = [
+            { name: 'X', vector: new THREE.Vector3(1,0,0), color: 0xe45b5b },
+            { name: 'Y', vector: new THREE.Vector3(0,1,0), color: 0x55c878 },
+            { name: 'Z', vector: new THREE.Vector3(0,0,1), color: 0x5795ed }
+        ];
+        axes.forEach(axis => {
+            const arrow = new THREE.ArrowHelper(axis.vector, origin, scale, axis.color, scale*0.22, scale*0.12);
+            arrow.userData.safarExtrudeDirection = axis.name;
+            group.add(arrow);
+            arrow.children.forEach(child => { child.userData.safarExtrudeDirection = axis.name; });
+            extrusionGizmoHandles.push(...arrow.children, arrow);
+        });
+        const normalArrow = new THREE.ArrowHelper(direction.clone().normalize(), origin, scale*1.25, 0xffd166, scale*0.25, scale*0.14);
+        normalArrow.userData.safarExtrudeDirection = 'NORMAL';
+        normalArrow.children.forEach(child => { child.userData.safarExtrudeDirection = 'NORMAL'; });
+        group.add(normalArrow);
+        extrusionGizmoHandles.push(...normalArrow.children, normalArrow);
+        scene().add(group);
+        return group;
+    }
+
+    function updateExtrusionPreview(height) {
+        if (!extrusionPreviewActive) return;
+
+        const value = Number(
+            height ||
+            (extrudeHeightInput && extrudeHeightInput.value) ||
+            extrusionPreviewHeight ||
+            extrudeHeightMm
+        );
+        if (!Number.isFinite(value) || value <= 0) return;
+
+        extrusionPreviewHeight = value;
+        clearExtrusionPreview();
+        extrusionPreviewActive = true;
+
+        const selected = context().getSelectedObjects().filter(object =>
+            object && ['rect', 'rectangle', 'square', 'polyline', 'circle'].includes(
+                String((object.userData || {}).type).toLowerCase()
+            )
+        );
+
+        if (!selected.length) {
+            context().setPrompt('EXTRUDE PREVIEW — Select at least one closed profile.');
+            return;
+        }
+
+        // Preview every selected profile. The previous implementation previewed
+        // only the first profile while the commit operation extruded all of them.
+        // That mismatch made the preview unreliable for multi-profile workflows.
+        extrusionPreviewGroup = new THREE.Group();
+        extrusionPreviewGroup.name = 'SAFAR_EDGE_EXTRUSION_LIVE_PREVIEW';
+
+        let firstDirection = null;
+        let builtCount = 0;
+        for (const profile of selected) {
+            const built = buildExtrusionPreviewGeometry(profile, value);
+            if (!built) {
+                extrusionPreviewGroup.traverse(node => {
+                    if (node.geometry && node.geometry.dispose) node.geometry.dispose();
+                    if (node.material) {
+                        const materials = Array.isArray(node.material) ? node.material : [node.material];
+                        materials.forEach(material => material && material.dispose && material.dispose());
+                    }
+                });
+                extrusionPreviewGroup = null;
+                context().setPrompt('EXTRUDE PREVIEW — One or more profiles could not be previewed. Check direction, taper and target solid.');
+                return;
+            }
+
+            if (!firstDirection) firstDirection = built.direction.clone();
+
+            const ghost = new THREE.Mesh(built.geometry, new THREE.MeshStandardMaterial({
+                color: 0x36c5e8,
+                transparent: true,
+                opacity: 0.32,
+                depthWrite: false,
+                side: THREE.DoubleSide,
+                metalness: 0.05,
+                roughness: 0.45
+            }));
+            ghost.renderOrder = 20;
+            extrusionPreviewGroup.add(ghost);
+
+            const edges = new THREE.LineSegments(
+                new THREE.EdgesGeometry(built.geometry, 1.5),
+                new THREE.LineBasicMaterial({
+                    color: 0x8be9ff,
+                    transparent: true,
+                    opacity: 0.95,
+                    depthTest: false
+                })
+            );
+            edges.renderOrder = 21;
+            extrusionPreviewGroup.add(edges);
+            builtCount++;
+        }
+
+        if (!builtCount) {
+            extrusionPreviewGroup = null;
+            context().setPrompt('EXTRUDE PREVIEW — No valid profile geometry was generated.');
+            return;
+        }
+
+        scene().add(extrusionPreviewGroup);
+        const previewBox = new THREE.Box3().setFromObject(extrusionPreviewGroup);
+        const origin = previewBox.getCenter(new THREE.Vector3());
+        const size = previewBox.getSize(new THREE.Vector3()).length();
+        extrusionGizmoGroup = createExtrusionGizmo(
+            origin,
+            firstDirection || new THREE.Vector3(0, 0, 1),
+            Math.max(size * 0.22, 100)
+        );
+    }
+
+    function chooseExtrusionGizmoDirection(name) {
+        const axes = { X: [1,0,0], Y: [0,1,0], Z: [0,0,1] };
+        if (name === 'NORMAL') extrudeDirectionMode = 'NORMAL';
+        else if (axes[name]) {
+            extrudeDirectionMode = name;
+            extrudeCustomVector.set(...axes[name]);
+        }
+        if (extrudeDirectionSelect) extrudeDirectionSelect.value = extrudeDirectionMode;
+        if (extrudeDirectionMode === 'CUSTOM' && extrudeVectorInputs.x) {
+            extrudeVectorInputs.x.value = String(extrudeCustomVector.x);
+            extrudeVectorInputs.y.value = String(extrudeCustomVector.y);
+            extrudeVectorInputs.z.value = String(extrudeCustomVector.z);
+        }
+        updateExtrusionPreview();
+        context().setPrompt('EXTRUDE PREVIEW — Direction set to ' + name + '. Click a gizmo arrow to change direction, Enter to create the solid, or Esc to cancel.');
+    }
+
+    function pickExtrusionGizmo(event) {
+        if (!extrusionPreviewActive || !extrusionGizmoGroup || event.button !== 0) return false;
+        const r = renderer(), cam = camera();
+        if (!r || !cam) return false;
+        const rect = r.domElement.getBoundingClientRect();
+        const pointer = new THREE.Vector2(((event.clientX-rect.left)/rect.width)*2-1, -((event.clientY-rect.top)/rect.height)*2+1);
+        const ray = new THREE.Raycaster(); ray.setFromCamera(pointer, cam);
+        const hit = ray.intersectObjects(extrusionGizmoGroup.children, true).find(item => {
+            let node = item.object;
+            while (node && !node.userData.safarExtrudeDirection) node = node.parent;
+            return !!(node && node.userData.safarExtrudeDirection);
+        });
+        if (!hit) return false;
+        let node = hit.object;
+        while (node && !node.userData.safarExtrudeDirection) node = node.parent;
+        if (node) chooseExtrusionGizmoDirection(node.userData.safarExtrudeDirection);
+        event.preventDefault(); event.stopImmediatePropagation();
+        return true;
+    }
+
+    function commitExtrusionPreview(height) {
+        const finalHeight = Number(height || (extrudeHeightInput && extrudeHeightInput.value) || extrusionPreviewHeight || extrudeHeightMm);
+        if (!Number.isFinite(finalHeight) || finalHeight <= 0) {
+            context().setPrompt('EXTRUDE — Enter a positive extrusion height before confirming.');
+            return false;
+        }
+        // Remove only temporary preview/gizmo objects before using the
+        // established solid-creation and Undo/Redo path.
+        clearExtrusionPreview();
+        context().setPendingCommand(null);
+        return extrudeSelected(finalHeight);
     }
 
     function beginExtrude(ctx) {
@@ -1242,40 +2404,57 @@
             return;
         }
         const sharedHeight = getSharedExtrudeHeight();
-        if (sharedHeight) {
-            const profiles = selected.filter(o => o && ['rect','rectangle','square','polyline','circle'].includes(String((o.userData || {}).type).toLowerCase()));
-            if (profiles.length) {
-                extrudeSelected(sharedHeight);
-                return;
-            }
+        const profiles = selected.filter(o => o && ['rect','rectangle','square','polyline','circle'].includes(String((o.userData || {}).type).toLowerCase()));
+        if (!profiles.length) {
+            ctx.setPrompt('EXTRUDE — Select a closed profile first.');
+            return;
         }
-        ctx.setPrompt('EXTRUDE — Enter extrusion height in millimetres:');
+        // Phase 4 intentionally opens a preview instead of immediately
+        // committing the default side-panel height.
+        extrusionPreviewActive = true;
+        extrusionPreviewHeight = sharedHeight || extrudeHeightMm || 3000;
+        if (extrudeHeightInput) extrudeHeightInput.value = String(extrusionPreviewHeight);
+        updateExtrusionPreview(extrusionPreviewHeight);
+        ctx.setPrompt('EXTRUDE PREVIEW — Translucent solid shown. Enter a new height to update it, press Enter to create the solid, or Esc to cancel.');
         ctx.setPendingCommand({
             name: 'EXTRUDE',
-            prompt: 'EXTRUDE — Enter extrusion height in millimetres:',
+            prompt: 'EXTRUDE — Enter a height to update preview, then press Enter again to create the solid. Esc cancels.',
             onText: (upper, raw) => {
                 const height = Number(raw);
                 if (!Number.isFinite(height) || height <= 0) {
                     ctx.setPrompt('EXTRUDE — Height must be a positive number in millimetres. Enter height:');
                     return true;
                 }
-                extrudeSelected(height);
-                ctx.setPendingCommand(null);
+                extrusionPreviewHeight = height;
+                extrudeHeightMm = height;
+                if (extrudeHeightInput) extrudeHeightInput.value = String(height);
+                updateExtrusionPreview(height);
+                ctx.setPrompt('EXTRUDE PREVIEW — Translucent solid updated. Press Enter again to create the solid, or Esc to cancel.');
                 return true;
             },
-            onEnter: () => { ctx.setPendingCommand(null); ctx.setPrompt('EXTRUDE cancelled.'); }
+            onEnter: () => {
+                const finalHeight = Number(extrudeHeightInput && extrudeHeightInput.value) || extrusionPreviewHeight;
+                commitExtrusionPreview(finalHeight);
+                return true;
+            }
         });
     }
 
     function setSelectedSolidHeight(height) {
         const ctx = context();
+
         const solids = ctx.getSelectedObjects().filter(object =>
-            object && object.userData && object.userData.type === 'solid' && object.geometry
+            object &&
+            object.userData &&
+            String(object.userData.type || '').toLowerCase() === 'solid' &&
+            object.geometry
         );
+
         if (!solids.length) {
             ctx.setPrompt('SOLIDHEIGHT — Select one or more extruded solids first.');
             return false;
         }
+
         if (!Number.isFinite(height) || height <= 0) {
             ctx.setPrompt('SOLIDHEIGHT — Height must be a positive number in millimetres.');
             return false;
@@ -1283,50 +2462,222 @@
 
         const before = ctx.captureObjects(solids);
         let changed = 0;
+
+        const planeNormals = {
+            XY: new THREE.Vector3(0, 0, 1),
+            XZ: new THREE.Vector3(0, -1, 0),
+            YZ: new THREE.Vector3(1, 0, 0)
+        };
+
         solids.forEach(solid => {
             const geometry = solid.geometry;
             const position = geometry && geometry.getAttribute('position');
-            if (!position) return;
-            geometry.computeBoundingBox();
-            const box = geometry.boundingBox;
-            const oldHeight = Number(solid.userData.height) || (box.max.z - box.min.z);
-            if (!Number.isFinite(oldHeight) || oldHeight <= 1e-9) return;
-            const baseZ = box.min.z;
-            const oldTopZ = baseZ + oldHeight;
-            const tolerance = Math.max(1e-7, oldHeight * 1e-7);
-            for (let i = 0; i < position.count; i++) {
-                const z = position.getZ(i);
-                if (Math.abs(z - oldTopZ) <= tolerance) {
-                    position.setZ(i, baseZ + height);
-                }
+
+            if (!position || !position.count) return;
+
+            normalizeSolidExtrusionMetadata(solid);
+
+            solid.updateMatrixWorld(true);
+
+            // Original extrusion direction, transformed into world coordinates.
+            const storedDirection = new THREE.Vector3(
+                Number(solid.userData.extrusionDirection[0]),
+                Number(solid.userData.extrusionDirection[1]),
+                Number(solid.userData.extrusionDirection[2])
+            );
+
+            if (!Number.isFinite(storedDirection.lengthSq()) ||
+                storedDirection.lengthSq() < 1e-12) {
+                return;
             }
+
+            storedDirection.normalize();
+
+            const worldOrigin = solid.localToWorld(
+                new THREE.Vector3(0, 0, 0)
+            );
+
+            const worldDirection = solid.localToWorld(
+                storedDirection.clone()
+            ).sub(worldOrigin).normalize();
+
+            if (!Number.isFinite(worldDirection.lengthSq()) ||
+                worldDirection.lengthSq() < 1e-12) {
+                return;
+            }
+
+            // Transform the original work-plane normal correctly.
+            const workPlane = String(solid.userData.workPlane || 'XY').toUpperCase();
+            const localPlaneNormal = planeNormals[workPlane] || planeNormals.XY;
+
+            const normalMatrix = new THREE.Matrix3()
+                .getNormalMatrix(solid.matrixWorld);
+
+            const worldPlaneNormal = localPlaneNormal.clone()
+                .applyMatrix3(normalMatrix)
+                .normalize();
+
+            if (!Number.isFinite(worldPlaneNormal.lengthSq()) ||
+                worldPlaneNormal.lengthSq() < 1e-12) {
+                return;
+            }
+
+            // The dot product accounts for oblique extrusion directions.
+            const directionDot = worldDirection.dot(worldPlaneNormal);
+
+            if (!Number.isFinite(directionDot) ||
+                Math.abs(directionDot) < 1e-8) {
+                console.warn(
+                    'SOLIDHEIGHT: Extrusion direction is nearly parallel to its profile plane.',
+                    solid
+                );
+                return;
+            }
+
+            let minProjection = Infinity;
+            let maxProjection = -Infinity;
+
+            const worldVertices = [];
+            const projections = [];
+
+            for (let i = 0; i < position.count; i++) {
+                const localPoint = new THREE.Vector3(
+                    position.getX(i),
+                    position.getY(i),
+                    position.getZ(i)
+                );
+
+                const worldPoint = solid.localToWorld(localPoint);
+
+                const projection = worldPoint.dot(worldPlaneNormal);
+
+                worldVertices.push(worldPoint);
+                projections.push(projection);
+
+                minProjection = Math.min(minProjection, projection);
+                maxProjection = Math.max(maxProjection, projection);
+            }
+
+            // Normal separation is the perpendicular component of extrusion.
+            // Divide by |dot| to obtain the actual extrusion length.
+            const normalSeparation = maxProjection - minProjection;
+            const actualHeight = normalSeparation / Math.abs(directionDot);
+
+            if (!Number.isFinite(actualHeight) || actualHeight <= 1e-9) {
+                return;
+            }
+
+            const delta = height - actualHeight;
+
+            if (Math.abs(delta) <= 1e-9) {
+                solid.userData.height = height;
+                solid.userData.extrusionHeight = height;
+                return;
+            }
+
+            // Positive dot: top cap is at maximum normal projection.
+            // Negative dot: top cap is at minimum normal projection.
+            const topProjection = directionDot > 0
+                ? maxProjection
+                : minProjection;
+
+            const tolerance = Math.max(
+                1e-7,
+                normalSeparation * 1e-7
+            );
+
+            // Move only the vertices belonging to the extrusion cap.
+            for (let i = 0; i < position.count; i++) {
+                if (Math.abs(projections[i] - topProjection) > tolerance) {
+                    continue;
+                }
+
+                const movedWorldPoint = worldVertices[i].clone()
+                    .addScaledVector(worldDirection, delta);
+
+                const movedLocalPoint = solid.worldToLocal(movedWorldPoint);
+
+                position.setXYZ(
+                    i,
+                    movedLocalPoint.x,
+                    movedLocalPoint.y,
+                    movedLocalPoint.z
+                );
+            }
+
             position.needsUpdate = true;
+
             geometry.computeVertexNormals();
             geometry.computeBoundingBox();
             geometry.computeBoundingSphere();
+
+            // Keep legacy and versioned metadata synchronized.
             solid.userData.height = height;
-            // Rebuild the edge overlay to match the resized solid.
-            const oldEdges = solid.children.find(child => child.userData && child.userData.isCadSolidEdges);
+            solid.userData.extrusionHeight = height;
+            solid.userData.extrusionMetadataVersion = 1;
+
+            // Rebuild the existing solid outline helper.
+            const oldEdges = solid.children.find(child =>
+                child.userData && child.userData.isCadSolidEdges
+            );
+
             if (oldEdges) {
-                if (oldEdges.geometry) oldEdges.geometry.dispose();
-                oldEdges.geometry = new THREE.EdgesGeometry(geometry, 25);
+                if (oldEdges.geometry) {
+                    oldEdges.geometry.dispose();
+                }
+
+                oldEdges.geometry = new THREE.EdgesGeometry(geometry, 1.5);
+                oldEdges.userData.sourceGeometryId = geometry.uuid;
+                oldEdges.userData.sourcePositionVersion =
+                    position.version || 0;
             }
+
             changed++;
         });
+
         if (!changed) {
             ctx.setPrompt('SOLIDHEIGHT — No editable extruded solids were found.');
             return false;
         }
+
+        // Preserve existing Undo/Redo behaviour.
         ctx.recordModify(solids, before);
+
         applySolidDisplay();
         refreshDimensionPanel();
-        if (global.SafarEdgeMeasurements) {
-            const syncResult = global.SafarEdgeMeasurements.syncFromMenu({ source: 'manual' });
-            const audit = global.SafarEdgeMeasurements.auditCurrentDrawing && global.SafarEdgeMeasurements.auditCurrentDrawing();
-            if (audit && !audit.ok) console.warn('SAFAR EDGE post-height measurement audit:', audit);
-            if (syncResult && !syncResult.ok) console.warn('SAFAR EDGE measurement sync after height edit failed:', syncResult.message);
+
+        if (global.SafarEdgeProjectFiles) {
+            global.SafarEdgeProjectFiles.markDirty();
         }
-        ctx.setPrompt(`SOLIDHEIGHT — Updated ${changed} solid(s) to ${height} mm; measurement check refreshed.`);
+
+        // Preserve measurement synchronization and audit.
+        if (global.SafarEdgeMeasurements) {
+            const syncResult =
+                global.SafarEdgeMeasurements.syncFromMenu({ source: 'manual' });
+
+            const audit =
+                global.SafarEdgeMeasurements.auditCurrentDrawing &&
+                global.SafarEdgeMeasurements.auditCurrentDrawing();
+
+            if (audit && !audit.ok) {
+                console.warn(
+                    'SAFAR EDGE post-height measurement audit:',
+                    audit
+                );
+            }
+
+            if (syncResult && !syncResult.ok) {
+                console.warn(
+                    'SAFAR EDGE measurement sync after height change failed:',
+                    syncResult.message
+                );
+            }
+        }
+
+        ctx.setPrompt(
+            `SOLIDHEIGHT — Updated ${changed} solid(s) to ${height} mm.`
+        );
+
         return true;
     }
 
@@ -1653,43 +3004,204 @@
         });
     }
 
-    // Explicit 3D transform commands. They operate on selected solids in XYZ,
-    // record the normal CAD undo snapshot, and leave 2D tools untouched.
+    // Phase 2F — reliable 3D solid transforms.
+    // Rotation and scale are applied about each solid's local geometric centre,
+    // so the solid does not unexpectedly orbit around the world origin.
+    function getSolidLocalCenter(object) {
+        const bounds = localGeometryBounds(object);
+        if (!bounds) return null;
+        return bounds.getCenter(new THREE.Vector3());
+    }
+
+    function moveObjectByWorldOffset(object, offset) {
+        const worldOffset = offset.clone();
+        if (object.parent) {
+            object.parent.updateMatrixWorld(true);
+            const origin = object.position.clone();
+            const worldOrigin = object.parent.localToWorld(origin.clone());
+            const worldTarget = worldOrigin.add(worldOffset);
+            object.position.copy(object.parent.worldToLocal(worldTarget));
+        } else {
+            object.position.add(worldOffset);
+        }
+        object.updateMatrix();
+        object.updateMatrixWorld(true);
+    }
+
+    function rotateSolidAroundCenter(object, anglesDegrees) {
+        const center = getSolidLocalCenter(object);
+        if (!center) return false;
+
+        const delta = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+            THREE.MathUtils.degToRad(anglesDegrees[0]),
+            THREE.MathUtils.degToRad(anglesDegrees[1]),
+            THREE.MathUtils.degToRad(anglesDegrees[2]),
+            object.rotation.order || 'XYZ'
+        ));
+
+        // The centre's offset from the object's origin after scale and current
+        // orientation. Compensate position after changing the orientation.
+        const oldCenterOffset = center.clone().multiply(object.scale)
+            .applyQuaternion(object.quaternion);
+        const nextQuaternion = object.quaternion.clone().multiply(delta);
+        const newCenterOffset = center.clone().multiply(object.scale)
+            .applyQuaternion(nextQuaternion);
+
+        object.position.add(oldCenterOffset.sub(newCenterOffset));
+        object.quaternion.copy(nextQuaternion);
+        object.updateMatrix();
+        object.updateMatrixWorld(true);
+        return true;
+    }
+
+    function scaleSolidAroundCenter(object, factor) {
+        const center = getSolidLocalCenter(object);
+        if (!center) return false;
+
+        const oldCenterOffset = center.clone().multiply(object.scale)
+            .applyQuaternion(object.quaternion);
+        const nextScale = object.scale.clone().multiplyScalar(factor);
+        const newCenterOffset = center.clone().multiply(nextScale)
+            .applyQuaternion(object.quaternion);
+
+        object.position.add(oldCenterOffset.sub(newCenterOffset));
+        object.scale.copy(nextScale);
+        object.updateMatrix();
+        object.updateMatrixWorld(true);
+
+        // Synchronize legacy/versioned height fields with actual transformed
+        // extrusion length; geometry remains authoritative for later edits.
+        const capInfo = getSolidExtrusionCapInfo(object);
+        if (capInfo && Number.isFinite(capInfo.currentHeight)) {
+            object.userData.height = capInfo.currentHeight;
+            object.userData.extrusionHeight = capInfo.currentHeight;
+        }
+        return true;
+    }
+
     function register3DEditCommands() {
         const register = (name, aliases, desc, prompt, parser, apply) => {
             if (CAD.getCommand(name)) return;
-            CAD.registerCommand({name,aliases,desc,category:'3d',execute:ctx=>{
-                const selected=ctx.getSelectedObjects().filter(o=>o && o.userData && o.userData.type==='solid');
-                if(!selected.length){ctx.setPrompt(`${name} — Select one or more 3D solids first.`);return;}
-                ctx.setPrompt(prompt);
-                ctx.setPendingCommand({name,prompt,onText:(upper,raw)=>{
-                    const values=parser(raw);
-                    if(!values){ctx.setPrompt(`${name} — Invalid input. ${prompt}`);return true;}
-                    const before=ctx.captureObjects(selected);
-                    apply(selected,values);
-                    selected.forEach(o=>{if(o.updateMatrix)o.updateMatrix();if(o.updateMatrixWorld)o.updateMatrixWorld(true);});
-                    ctx.recordModify(selected,before);
-                    applySolidDisplay();
-                    if(global.SafarEdgeMeasurements)global.SafarEdgeMeasurements.syncFromMenu({source:'manual'});
-                    ctx.setPendingCommand(null);ctx.setPrompt(`${name} — Updated ${selected.length} solid(s).`);
-                    if(global.SafarEdgeProjectFiles)global.SafarEdgeProjectFiles.markDirty();
-                    return true;
-                },onEnter:()=>{ctx.setPendingCommand(null);ctx.setPrompt(`${name} cancelled.`);}});
-            }});
+            CAD.registerCommand({
+                name,
+                aliases,
+                desc,
+                category: '3d',
+                execute: ctx => {
+                    const selected = Array.from(new Set(ctx.getSelectedObjects() || []))
+                        .filter(object => object && object.userData &&
+                            String(object.userData.type || '').toLowerCase() === 'solid');
+                    if (!selected.length) {
+                        ctx.setPrompt(`${name} — Select one or more 3D solids first.`);
+                        return;
+                    }
+
+                    ctx.setPrompt(prompt);
+                    ctx.setPendingCommand({
+                        name,
+                        prompt,
+                        onText: (upper, raw) => {
+                            const values = parser(raw);
+                            if (!values) {
+                                ctx.setPrompt(`${name} — Invalid input. ${prompt}`);
+                                return true;
+                            }
+
+                            const before = ctx.captureObjects(selected);
+                            let changed = 0;
+                            selected.forEach(object => {
+                                if (apply(object, values)) changed++;
+                                if (object.updateMatrix) object.updateMatrix();
+                                if (object.updateMatrixWorld) object.updateMatrixWorld(true);
+                            });
+
+                            if (!changed) {
+                                ctx.setPrompt(`${name} — No selected solid could be transformed.`);
+                                ctx.setPendingCommand(null);
+                                return true;
+                            }
+
+                            // Keep the standard CAD history path and all existing
+                            // project/measurement refresh hooks.
+                            ctx.recordModify(selected, before);
+                            applySolidDisplay();
+                            refreshDimensionPanel();
+                            if (global.SafarEdgeMeasurements) {
+                                const result = global.SafarEdgeMeasurements.syncFromMenu({ source: 'manual' });
+                                const audit = global.SafarEdgeMeasurements.auditCurrentDrawing &&
+                                    global.SafarEdgeMeasurements.auditCurrentDrawing();
+                                if (audit && !audit.ok) {
+                                    console.warn(`SAFAR EDGE ${name} measurement audit:`, audit);
+                                }
+                                if (result && !result.ok) {
+                                    console.warn(`SAFAR EDGE ${name} measurement sync failed:`, result.message);
+                                }
+                            }
+                            if (global.SafarEdgeProjectFiles) {
+                                global.SafarEdgeProjectFiles.markDirty();
+                            }
+
+                            ctx.setPendingCommand(null);
+                            ctx.setPrompt(`${name} — Updated ${changed} of ${selected.length} selected solid(s).`);
+                            return true;
+                        },
+                        onEnter: () => {
+                            ctx.setPendingCommand(null);
+                            ctx.setPrompt(`${name} cancelled.`);
+                        }
+                    });
+                }
+            });
         };
-        register('3DMOVE',['3MV'],'Move selected 3D solids by X,Y,Z offsets (mm).','3DMOVE — Enter X,Y,Z offsets in mm (e.g. 100,0,50):',
-            raw=>{const a=raw.split(/[,\s]+/).filter(Boolean).map(Number);return a.length===3&&a.every(Number.isFinite)?a:null;},
-            (items,v)=>items.forEach(o=>o.position.add(new THREE.Vector3(v[0],v[1],v[2]))));
-        register('3DROTATE',['3RO'],'Rotate selected 3D solids around X,Y,Z axes (degrees).','3DROTATE — Enter X,Y,Z angles in degrees (e.g. 0,0,90):',
-            raw=>{const a=raw.split(/[,\s]+/).filter(Boolean).map(Number);return a.length===3&&a.every(Number.isFinite)?a:null;},
-            (items,v)=>items.forEach(o=>{o.rotation.x+=THREE.MathUtils.degToRad(v[0]);o.rotation.y+=THREE.MathUtils.degToRad(v[1]);o.rotation.z+=THREE.MathUtils.degToRad(v[2]);}));
-        register('3DSCALE',['3SC'],'Scale selected 3D solids uniformly.','3DSCALE — Enter a positive scale factor (e.g. 1.25):',
-            raw=>{const n=Number(raw);return Number.isFinite(n)&&n>0?[n]:null;},
-            (items,v)=>items.forEach(o=>o.scale.multiplyScalar(v[0])));
+
+        register(
+            '3DMOVE', ['3MV'],
+            'Move selected 3D solids by world X,Y,Z offsets (mm).',
+            '3DMOVE — Enter X,Y,Z offsets in mm (e.g. 100,0,50):',
+            raw => {
+                const values = raw.split(/[,\s]+/).filter(Boolean).map(Number);
+                return values.length === 3 && values.every(Number.isFinite) ? values : null;
+            },
+            (object, values) => {
+                moveObjectByWorldOffset(object, new THREE.Vector3(values[0], values[1], values[2]));
+                return true;
+            }
+        );
+
+        register(
+            '3DROTATE', ['3RO'],
+            'Rotate selected 3D solids about their geometric centres (degrees).',
+            '3DROTATE — Enter X,Y,Z rotation angles in degrees (e.g. 0,0,90):',
+            raw => {
+                const values = raw.split(/[,\s]+/).filter(Boolean).map(Number);
+                return values.length === 3 && values.every(Number.isFinite) ? values : null;
+            },
+            (object, values) => rotateSolidAroundCenter(object, values)
+        );
+
+        register(
+            '3DSCALE', ['3SC'],
+            'Scale selected 3D solids uniformly about their geometric centres.',
+            '3DSCALE — Enter a positive scale factor (e.g. 1.25):',
+            raw => {
+                const factor = Number(raw);
+                return Number.isFinite(factor) && factor > 0 ? [factor] : null;
+            },
+            (object, values) => scaleSolidAroundCenter(object, values[0])
+        );
     }
 
     function initialize() {
         bindNavigation();
+        if (!global.document.documentElement.dataset.safarExtrudePreviewEscapeBound) {
+            global.document.documentElement.dataset.safarExtrudePreviewEscapeBound = '1';
+            global.document.addEventListener('keydown', event => {
+                if (event.key !== 'Escape' || !extrusionPreviewActive) return;
+                clearExtrusionPreview();
+                context().setPendingCommand(null);
+                context().setPrompt('EXTRUDE cancelled.');
+            }, true);
+        }
         createFillButton();
         createEnvironmentControls();
         createQuickLayerSelector();
@@ -1719,7 +3231,28 @@
         fitModel,
         setStandardView,
         getDrawingFrame,
+
+        setWorkPlane: name => {
+            const views = {
+                XY: 'top',
+                XZ: 'front',
+                YZ: 'left'
+            };
+
+            const planeName = String(name || '').toUpperCase();
+            const view = views[planeName];
+
+            if (!view) return false;
+
+            setStandardView(view);
+            return true;
+        },
+
+        getWorkPlane: () => activeWorkPlane,
+
         extrudeSelected,
+        cancelExtrusionPreview: clearExtrusionPreview,
+        refreshExtrusionPreview: updateExtrusionPreview,
         setSelectedSolidHeight,
         setSolidFillEnabled: enabled => { solidFillEnabled = !!enabled; persistSolidFillPreference(); applySolidDisplay(); },
         isSolidFillEnabled: () => solidFillEnabled,

@@ -386,7 +386,8 @@ function getDrawPoint() {
         return pt;
     }
 
-    if (currentTool === 'move') {
+    // MOVE and COPY must use identical true 3D node snapping.
+    if (currentTool === 'move' || currentTool === 'copy') {
         const moveSnap = findMoveNodeSnap();
         if (moveSnap) {
             currentSnap = moveSnap;

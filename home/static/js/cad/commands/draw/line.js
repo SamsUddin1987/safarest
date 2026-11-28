@@ -43,6 +43,9 @@
 
         line.userData = {
             type: 'line',
+            workPlane: global.SafarEdge3D
+                ? global.SafarEdge3D.getWorkPlane()
+                : 'XY',
             originalColor: 0xffffff
         };
 

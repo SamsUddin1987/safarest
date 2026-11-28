@@ -240,15 +240,38 @@ function getSelectionGripDescriptors(object) {
     // camera-facing centre grip so they can be repositioned in ISO as well.
     if (data.type === 'dimension') return descriptors;
     if (data.type === 'solid') {
+        // Solid grips are true mesh-node grips, not bounding-box stretch
+        // handles. Each visible grip represents one unique local vertex.
+        // Dragging it moves only coincident copies of that vertex so adjoining
+        // triangles remain connected while the rest of the object stays put.
+        const attribute = object.geometry && object.geometry.getAttribute
+            ? object.geometry.getAttribute('position') : null;
+        if (!attribute || !attribute.count) return descriptors;
         const box = new THREE.Box3().setFromObject(object);
-        if (!box.isEmpty()) {
+        const diagonal = box.isEmpty() ? 1 : box.getSize(new THREE.Vector3()).length();
+        const tolerance = Math.max(diagonal * 1e-7, 1e-8);
+        const toleranceSq = tolerance * tolerance;
+        const unique = [];
+        for (let i = 0; i < attribute.count; i++) {
+            const local = new THREE.Vector3().fromBufferAttribute(attribute, i);
+            if (unique.some(item => item.local.distanceToSquared(local) <= toleranceSq)) continue;
+            unique.push({ local, sourceIndex: i });
+        }
+        // Avoid flooding the viewport with thousands of grips on dense imported
+        // meshes. Keep a deterministic sample while retaining every node on
+        // ordinary extrusion solids and low-poly editable objects.
+        const maxVisible = 240;
+        const stride = Math.max(1, Math.ceil(unique.length / maxVisible));
+        unique.forEach((item, index) => {
+            if (index % stride !== 0 && index !== unique.length - 1) return;
             descriptors.push({
                 object,
-                kind: 'solid-move',
-                index: 0,
-                point: box.getCenter(new THREE.Vector3())
+                kind: 'solid-vertex',
+                index: item.sourceIndex,
+                localPoint: item.local.clone(),
+                point: object.localToWorld(item.local.clone())
             });
-        }
+        });
         return descriptors;
     }
 
@@ -333,19 +356,88 @@ function createSelectionGripMesh() {
     return group;
 }
 
+// MOVE/COPY use dedicated base-point markers, not the editable stretch grips.
+// These markers are pick-only: dragging them never edits mesh vertices.
+function getMoveCopyPointDescriptors(object) {
+    if (!object) return [];
+    object.updateMatrixWorld(true);
+    const data = object.userData || {};
+    if (data.type === 'dimension') return [];
+
+    const points = [];
+    const pushUnique = point => {
+        if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) return;
+        if (points.some(existing => existing.distanceToSquared(point) < 1e-12)) return;
+        points.push(point.clone());
+    };
+
+    // Prefer actual mesh vertices for 3D solids. Geometry vertices are local;
+    // convert them to world coordinates so the base point is exact in ISO too.
+    const attribute = object.geometry && object.geometry.getAttribute
+        ? object.geometry.getAttribute('position') : null;
+    if (attribute && attribute.count) {
+        const localUnique = [];
+        const box = new THREE.Box3().setFromObject(object);
+        const diagonal = box.isEmpty() ? 1 : box.getSize(new THREE.Vector3()).length();
+        const toleranceSq = Math.pow(Math.max(diagonal * 1e-7, 1e-8), 2);
+        for (let i = 0; i < attribute.count; i++) {
+            const local = new THREE.Vector3().fromBufferAttribute(attribute, i);
+            if (localUnique.some(existing => existing.distanceToSquared(local) <= toleranceSq)) continue;
+            localUnique.push(local);
+        }
+        // Preserve every point for ordinary CAD solids; limit only dense meshes.
+        const maxVisible = 300;
+        const stride = Math.max(1, Math.ceil(localUnique.length / maxVisible));
+        localUnique.forEach((local, index) => {
+            if (index % stride === 0 || index === localUnique.length - 1) {
+                pushUnique(object.localToWorld(local.clone()));
+            }
+        });
+    }
+
+    // CAD entities that store their defining nodes in userData.points.
+    if (!points.length && Array.isArray(data.points)) {
+        data.points.forEach(value => {
+            if (value && value.isVector3) pushUnique(value);
+            else if (value) pushUnique(new THREE.Vector3(value.x, value.y, value.z || 0));
+        });
+    }
+    if (!points.length && data.center) {
+        const center = data.center.isVector3
+            ? data.center.clone()
+            : new THREE.Vector3(data.center.x, data.center.y, data.center.z || 0);
+        pushUnique(center);
+    }
+
+    return points.map((point, index) => ({
+        object,
+        kind: 'move-copy-base-point',
+        index,
+        point
+    }));
+}
+
 function updateSelectionGrips() {
     if (!scene || !camera || !renderer || !THREE) return;
+
     const group = ensureSelectionGripGroup();
     if (!group) return;
 
-    // Selection grips are shown only in idle SELECT mode. During commands
-    // such as EXTEND they are hidden, while entity rollover/selection colour
-    // remains visible. This avoids confusing blue vertex nodes in command mode.
+    // Stretching grips are visible ONLY in SELECT mode.
     group.visible = currentTool === 'select';
+
+    // Never display stretching grips during MOVE or COPY.
+    if (currentTool !== 'select') {
+        selectionGripMeshes.forEach(grip => {
+            grip.visible = false;
+        });
+        return;
+    }
 
     const desired = [];
     selectedObjects.forEach(object => {
-        getSelectionGripDescriptors(object).forEach(descriptor => desired.push(descriptor));
+        const descriptors = getSelectionGripDescriptors(object);
+        descriptors.forEach(descriptor => desired.push(descriptor));
     });
 
     while (selectionGripMeshes.length < desired.length) {
@@ -399,8 +491,64 @@ function applySelectionGripPoint(drag, worldPoint) {
 
     if (drag.descriptor.kind === 'solid-move') {
         const delta = worldPoint.clone().sub(drag.startPoint);
-        object.position.copy(drag.originalPosition || new THREE.Vector3()).add(delta);
+        object.position.copy(drag.originalPosition || object.position.clone()).add(delta);
         object.updateMatrixWorld(true);
+        updateSelectionGrips();
+        return;
+    }
+
+    if (drag.descriptor.kind === 'solid-stretch') {
+        const source = drag.originalGeometry;
+        const sourceAttr = source && source.getAttribute('position');
+        const targetAttr = object.geometry && object.geometry.getAttribute('position');
+        if (!sourceAttr || !targetAttr) return;
+        const originalMatrix = drag.originalMatrixWorld || object.matrixWorld.clone();
+        const inverse = originalMatrix.clone().invert();
+        const box = drag.originalWorldBox;
+        if (!box || box.isEmpty()) return;
+        const viewNormal = camera.getWorldDirection(new THREE.Vector3()).normalize();
+        const worldDelta = worldPoint.clone().sub(drag.startPoint);
+        const limits = {
+            x: [box.min.x, box.max.x], y: [box.min.y, box.max.y], z: [box.min.z, box.max.z]
+        };
+        const scale = {x:1,y:1,z:1};
+        const translate = {x:0,y:0,z:0};
+        for (const key of drag.descriptor.axisKeys || []) {
+            const axis = key === 'x' ? new THREE.Vector3(1,0,0) : key === 'y' ? new THREE.Vector3(0,1,0) : new THREE.Vector3(0,0,1);
+            const projected = axis.clone().addScaledVector(viewNormal, -axis.dot(viewNormal));
+            const denom = projected.lengthSq();
+            if (denom < 1e-8) continue; // axis is edge-on; avoid unstable scaling
+            const amount = worldDelta.dot(projected) / denom;
+            const side = drag.descriptor.sides[key];
+            const lo = limits[key][0], hi = limits[key][1];
+            const extent = hi - lo;
+            if (extent < 1e-8) continue;
+            const moving = (side > 0 ? hi : lo) + amount;
+            const fixed = side > 0 ? lo : hi;
+            const newExtent = Math.max(extent * 0.01, Math.abs(moving - fixed));
+            scale[key] = newExtent / extent;
+            translate[key] = fixed - fixed * scale[key];
+        }
+        for (let i=0; i<sourceAttr.count; i++) {
+            const local = new THREE.Vector3().fromBufferAttribute(sourceAttr, i);
+            const world = local.applyMatrix4(originalMatrix);
+            world.set(world.x*scale.x+translate.x, world.y*scale.y+translate.y, world.z*scale.z+translate.z);
+            world.applyMatrix4(inverse);
+            targetAttr.setXYZ(i, world.x, world.y, world.z);
+        }
+        targetAttr.needsUpdate = true;
+        object.geometry.computeVertexNormals();
+        object.geometry.computeBoundingBox();
+        object.geometry.computeBoundingSphere();
+        object.updateMatrixWorld(true);
+        // Refresh a conventional solid edge child if present.
+        object.children.forEach(child => {
+            if (child.userData && child.userData.isCadSolidEdges && child.geometry) {
+                const old = child.geometry;
+                child.geometry = new THREE.EdgesGeometry(object.geometry);
+                old.dispose();
+            }
+        });
         updateSelectionGrips();
         return;
     }
@@ -408,6 +556,41 @@ function applySelectionGripPoint(drag, worldPoint) {
     object.updateMatrixWorld(true);
     const inverse = object.matrixWorld.clone().invert();
     const localPoint = worldPoint.clone().applyMatrix4(inverse);
+
+    if (drag.descriptor.kind === 'solid-vertex') {
+        const sourceAttribute = drag.originalGeometry.getAttribute('position');
+        const targetAttribute = object.geometry && object.geometry.getAttribute('position');
+        if (!sourceAttribute || !targetAttribute || !drag.descriptor.localPoint) return;
+        const node = drag.descriptor.localPoint;
+        const bounds = drag.originalGeometry.boundingBox || new THREE.Box3().setFromBufferAttribute(sourceAttribute);
+        const diagonal = bounds.getSize(new THREE.Vector3()).length();
+        const tolerance = Math.max(diagonal * 1e-7, 1e-8);
+        const toleranceSq = tolerance * tolerance;
+        const delta = localPoint.clone().sub(node);
+        let changed = 0;
+        for (let i = 0; i < sourceAttribute.count; i++) {
+            const original = new THREE.Vector3().fromBufferAttribute(sourceAttribute, i);
+            if (original.distanceToSquared(node) <= toleranceSq) {
+                targetAttribute.setXYZ(i, original.x + delta.x, original.y + delta.y, original.z + delta.z);
+                changed++;
+            }
+        }
+        if (!changed) return;
+        targetAttribute.needsUpdate = true;
+        object.geometry.computeVertexNormals();
+        object.geometry.computeBoundingBox();
+        object.geometry.computeBoundingSphere();
+        object.updateMatrixWorld(true);
+        object.children.forEach(child => {
+            if (child.userData && child.userData.isCadSolidEdges && child.geometry) {
+                const previous = child.geometry;
+                child.geometry = new THREE.EdgesGeometry(object.geometry);
+                previous.dispose();
+            }
+        });
+        updateSelectionGrips();
+        return;
+    }
 
     if (drag.descriptor.kind === 'circle-center') {
         const startLocal = drag.startPoint.clone().applyMatrix4(inverse);

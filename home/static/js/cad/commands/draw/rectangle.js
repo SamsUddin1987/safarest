@@ -79,6 +79,7 @@
         rectangle.userData = {
             type: 'rect',
             points: points,
+            workPlane: getDrawingAxes().name || 'XY',
             originalColor: 0xff9900
         };
 

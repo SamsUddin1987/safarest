@@ -23,6 +23,7 @@
         clearPreview(context);
         objects = [];
         basePoint = null;
+        window.SafarEdgeCommandGripObjects = null;
     }
 
     CAD.registerTool('move', {
@@ -32,6 +33,10 @@
                 context.finishCurrentTool();
                 return;
             }
+
+            // Use the selected source list for the shared MOVE/COPY base-point
+            // overlay. Stretch grips are not used by either command.
+            window.SafarEdgeCommandGripObjects = objects.slice();
 
             context.setPrompt(
                 `MOVE — ${objects.length} object(s). Pick base node/point (OSNAP works in all views):`

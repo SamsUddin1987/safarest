@@ -72,6 +72,9 @@
             points: cleanPoints,
             closed: closed,
             isClosed: closed,
+            workPlane: global.SafarEdge3D
+                ? global.SafarEdge3D.getWorkPlane()
+                : 'XY',
             originalColor: 0x00ff00
         };
 

@@ -218,10 +218,13 @@ function onMouseMove(event) {
     // selection dragging and update the selected vertex/centre in real time.
     if (selectionGripDrag) {
         const drag = selectionGripDrag;
-        const gripPoint = getCursorWorldCoordinates().clone();
+        const gripPoint = getGripPointOnCameraPlane(event, drag.gripWorldPoint || drag.startPoint);
+        if (drag.pointerOffset) gripPoint.add(drag.pointerOffset);
 
-        // Snap to other entities, but never to the entity whose grip is moving.
-        if (osnapOn && typeof computeOsnap === 'function' && typeof getSnapData === 'function') {
+        const isSolidGrip = String((drag.object.userData || {}).type || '').toLowerCase() === 'solid';
+        // Keep existing 2D OSNAP behaviour. 3D solid grips use a camera-plane
+        // drag and must not be flattened onto the XY drawing plane.
+        if (!isSolidGrip && osnapOn && typeof computeOsnap === 'function' && typeof getSnapData === 'function') {
             const snapItems = drawnObjects
                 .filter(object => object !== drag.object)
                 .map(getSnapData);
@@ -265,12 +268,15 @@ function onMouseMove(event) {
             }
         }
 
-        if (gridSnapOn && !gripOtrackActive && !currentSnap) {
+        if (!isSolidGrip && gridSnapOn && !gripOtrackActive && !currentSnap) {
             gripPoint.x = Math.round(gripPoint.x / GRID_SPACING) * GRID_SPACING;
             gripPoint.y = Math.round(gripPoint.y / GRID_SPACING) * GRID_SPACING;
         }
 
-        if (gripPoint.distanceTo(drag.startPoint) > 1e-7) {
+        const gripReferencePoint = drag.descriptor.kind === 'solid-vertex'
+            ? drag.gripWorldPoint
+            : drag.startPoint;
+        if (gripPoint.distanceTo(gripReferencePoint) > 1e-7) {
             drag.moved = true;
             renderer.domElement.style.cursor = 'grabbing';
             applySelectionGripPoint(drag, gripPoint);
@@ -412,8 +418,12 @@ function onCanvasClick(event) {
     // Obtain raw cursor position
     const rawPt = getCursorWorldCoordinates().clone();
 
-    // Obtain final drawing coordinate, including OSNAP
-    const pt = getDrawPoint();
+    // Obtain final drawing coordinate, including OSNAP.
+    let pt = getDrawPoint();
+
+    // MOVE and COPY use the normal CAD point/OSNAP workflow. Selection
+    // stretch grips are hidden as soon as either command starts and are never
+    // intercepted as command base points.
 
     if (window.CAD_DEBUG_SNAP) {
 
@@ -496,6 +506,20 @@ function setupSelectionBox(container) {
     container.appendChild(boxEl);
 }
 
+function getGripPointOnCameraPlane(event, planePoint) {
+    if (!camera || !renderer || !raycaster || !planePoint) return getCursorWorldCoordinates().clone();
+    const rect = renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+        ((event.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1,
+        -((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1
+    );
+    raycaster.setFromCamera(ndc, camera);
+    const normal = camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, planePoint);
+    const point = new THREE.Vector3();
+    return raycaster.ray.intersectPlane(plane, point) || getCursorWorldCoordinates().clone();
+}
+
 function onMouseDown(event) {
     if (window.SafarEdge3D && window.SafarEdge3D.isNavigationGestureActive && window.SafarEdge3D.isNavigationGestureActive()) return;
     if (osnapMenuEl) osnapMenuEl.style.display = 'none';
@@ -563,14 +587,23 @@ function onMouseDown(event) {
             const descriptor = grip && grip.userData ? grip.userData.cadGrip : null;
             if (descriptor && descriptor.object && selectedObjects.includes(descriptor.object)) {
                 const context = CAD.createContext();
-                const cursorPoint = getCursorWorldCoordinates().clone();
+                descriptor.object.updateMatrixWorld(true);
+                const gripPoint = descriptor.point.clone();
+                const cursorPoint = getGripPointOnCameraPlane(event, gripPoint);
                 selectionGripDrag = {
                     object: descriptor.object,
                     descriptor,
                     before: context.captureObjects([descriptor.object]),
                     originalGeometry: descriptor.object.geometry.clone(),
                     originalUserData: JSON.parse(JSON.stringify(descriptor.object.userData || {})),
+                    originalPosition: descriptor.object.position.clone(),
+                    originalMatrixWorld: descriptor.object.matrixWorld.clone(),
+                    originalWorldBox: new THREE.Box3().setFromObject(descriptor.object).clone(),
                     startPoint: cursorPoint,
+                    gripWorldPoint: gripPoint,
+                    pointerOffset: descriptor.kind === 'solid-vertex'
+                        ? gripPoint.clone().sub(cursorPoint)
+                        : null,
                     moved: false
                 };
                 renderer.domElement.style.cursor = 'grabbing';

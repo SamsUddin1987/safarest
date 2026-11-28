@@ -49,13 +49,10 @@ function setTool(toolName, toolOptions = null) {
 
     currentTool = toolName;
 
-    // AutoCAD-style grips are hidden while a command is active (EXTEND,
-    // MOVE, TRIM, etc.) and restored when returning to idle selection.
+    // Immediately hide the previous mode's handles. In particular, the
+    // editable stretch grips must never remain visible while MOVE/COPY starts.
     if (typeof selectionGripGroup !== 'undefined' && selectionGripGroup) {
-        selectionGripGroup.visible = toolName === 'select';
-    }
-    if (toolName === 'select' && typeof updateSelectionGrips === 'function') {
-        updateSelectionGrips();
+        selectionGripGroup.visible = false;
     }
 
     if (toolName !== 'select') pendingCommand = null;
@@ -77,6 +74,17 @@ function setTool(toolName, toolOptions = null) {
 
     const tool = CAD.getTool(toolName);
     if (tool && typeof tool.onStart === 'function') tool.onStart(CAD.createContext(), toolOptions);
+
+    // Build the grip overlay only AFTER the command has initialized its
+    // selection/source list. SELECT gets editable stretch grips; MOVE and COPY
+    // get the same pick-only base-point nodes. This ordering prevents stale
+    // stretch grips or an empty overlay at command start.
+    if (typeof updateSelectionGrips === 'function' &&
+        (currentTool === 'select' || currentTool === 'move' || currentTool === 'copy')) {
+        updateSelectionGrips();
+    } else if (typeof selectionGripGroup !== 'undefined' && selectionGripGroup) {
+        selectionGripGroup.visible = false;
+    }
 
     // Reassert the canonical cursor after every command start. This prevents
     // an opened drawing or a previous command from leaving an arrow cursor.
